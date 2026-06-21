@@ -8,7 +8,6 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.StorageModule = void 0;
 const common_1 = require("@nestjs/common");
-const minio_provider_1 = require("./minio.provider");
 const storage_service_1 = require("./storage.service");
 let StorageModule = class StorageModule {
 };
@@ -16,7 +15,7 @@ exports.StorageModule = StorageModule;
 exports.StorageModule = StorageModule = __decorate([
     (0, common_1.Global)(),
     (0, common_1.Module)({
-        providers: [minio_provider_1.MinioProvider, storage_service_1.StorageService],
+        providers: [storage_service_1.StorageService],
         exports: [storage_service_1.StorageService],
     })
 ], StorageModule);

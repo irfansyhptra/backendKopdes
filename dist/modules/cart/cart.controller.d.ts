@@ -15,13 +15,13 @@ export declare class CartController {
             items: ({
                 product: ({
                     images: {
+                        url: string;
                         id: string;
                         createdAt: Date;
                         updatedAt: Date;
                         isPrimary: boolean;
                         productId: string | null;
                         umkmProductId: string | null;
-                        url: string;
                     }[];
                 } & {
                     name: string;
@@ -36,13 +36,13 @@ export declare class CartController {
                 }) | null;
                 umkmProduct: ({
                     images: {
+                        url: string;
                         id: string;
                         createdAt: Date;
                         updatedAt: Date;
                         isPrimary: boolean;
                         productId: string | null;
                         umkmProductId: string | null;
-                        url: string;
                     }[];
                 } & {
                     name: string;
@@ -81,13 +81,13 @@ export declare class CartController {
             items: ({
                 product: ({
                     images: {
+                        url: string;
                         id: string;
                         createdAt: Date;
                         updatedAt: Date;
                         isPrimary: boolean;
                         productId: string | null;
                         umkmProductId: string | null;
-                        url: string;
                     }[];
                 } & {
                     name: string;
@@ -102,13 +102,13 @@ export declare class CartController {
                 }) | null;
                 umkmProduct: ({
                     images: {
+                        url: string;
                         id: string;
                         createdAt: Date;
                         updatedAt: Date;
                         isPrimary: boolean;
                         productId: string | null;
                         umkmProductId: string | null;
-                        url: string;
                     }[];
                 } & {
                     name: string;
@@ -147,13 +147,13 @@ export declare class CartController {
             items: ({
                 product: ({
                     images: {
+                        url: string;
                         id: string;
                         createdAt: Date;
                         updatedAt: Date;
                         isPrimary: boolean;
                         productId: string | null;
                         umkmProductId: string | null;
-                        url: string;
                     }[];
                 } & {
                     name: string;
@@ -168,13 +168,13 @@ export declare class CartController {
                 }) | null;
                 umkmProduct: ({
                     images: {
+                        url: string;
                         id: string;
                         createdAt: Date;
                         updatedAt: Date;
                         isPrimary: boolean;
                         productId: string | null;
                         umkmProductId: string | null;
-                        url: string;
                     }[];
                 } & {
                     name: string;
@@ -213,13 +213,13 @@ export declare class CartController {
             items: ({
                 product: ({
                     images: {
+                        url: string;
                         id: string;
                         createdAt: Date;
                         updatedAt: Date;
                         isPrimary: boolean;
                         productId: string | null;
                         umkmProductId: string | null;
-                        url: string;
                     }[];
                 } & {
                     name: string;
@@ -234,13 +234,13 @@ export declare class CartController {
                 }) | null;
                 umkmProduct: ({
                     images: {
+                        url: string;
                         id: string;
                         createdAt: Date;
                         updatedAt: Date;
                         isPrimary: boolean;
                         productId: string | null;
                         umkmProductId: string | null;
-                        url: string;
                     }[];
                 } & {
                     name: string;

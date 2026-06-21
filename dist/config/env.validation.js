@@ -26,11 +26,9 @@ class EnvironmentVariables {
     JWT_SECRET;
     JWT_EXPIRES_IN = '15m';
     REFRESH_TOKEN_EXPIRES_IN = '7d';
-    MINIO_ENDPOINT;
-    MINIO_PORT = 9000;
-    MINIO_ACCESS_KEY;
-    MINIO_SECRET_KEY;
-    MINIO_BUCKET;
+    SUPABASE_URL;
+    SUPABASE_ANON_KEY;
+    SUPABASE_SERVICE_ROLE_KEY;
     QDRANT_URL;
     QDRANT_API_KEY;
     GOOGLE_API_KEY;
@@ -80,26 +78,15 @@ __decorate([
 __decorate([
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
-], EnvironmentVariables.prototype, "MINIO_ENDPOINT", void 0);
-__decorate([
-    (0, class_validator_1.IsNumber)(),
-    (0, class_validator_1.Min)(0),
-    (0, class_validator_1.Max)(65535),
-    (0, class_validator_1.IsOptional)(),
-    __metadata("design:type", Object)
-], EnvironmentVariables.prototype, "MINIO_PORT", void 0);
+], EnvironmentVariables.prototype, "SUPABASE_URL", void 0);
 __decorate([
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
-], EnvironmentVariables.prototype, "MINIO_ACCESS_KEY", void 0);
+], EnvironmentVariables.prototype, "SUPABASE_ANON_KEY", void 0);
 __decorate([
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
-], EnvironmentVariables.prototype, "MINIO_SECRET_KEY", void 0);
-__decorate([
-    (0, class_validator_1.IsString)(),
-    __metadata("design:type", String)
-], EnvironmentVariables.prototype, "MINIO_BUCKET", void 0);
+], EnvironmentVariables.prototype, "SUPABASE_SERVICE_ROLE_KEY", void 0);
 __decorate([
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
@@ -160,9 +147,6 @@ function validate(config) {
     const convertedConfig = { ...config };
     if (convertedConfig['PORT']) {
         convertedConfig['PORT'] = Number(convertedConfig['PORT']);
-    }
-    if (convertedConfig['MINIO_PORT']) {
-        convertedConfig['MINIO_PORT'] = Number(convertedConfig['MINIO_PORT']);
     }
     if (convertedConfig['SMTP_PORT']) {
         convertedConfig['SMTP_PORT'] = Number(convertedConfig['SMTP_PORT']);

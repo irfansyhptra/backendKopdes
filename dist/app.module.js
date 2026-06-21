@@ -15,6 +15,7 @@ const env_validation_1 = require("./config/env.validation");
 const database_module_1 = require("./database/database.module");
 const cache_module_1 = require("./cache/cache.module");
 const storage_module_1 = require("./storage/storage.module");
+const qdrant_module_1 = require("./qdrant/qdrant.module");
 const auth_module_1 = require("./modules/auth/auth.module");
 const product_module_1 = require("./modules/product/product.module");
 const order_module_1 = require("./modules/order/order.module");
@@ -25,6 +26,7 @@ const ai_module_1 = require("./modules/ai/ai.module");
 const inventory_module_1 = require("./modules/inventory/inventory.module");
 const admin_module_1 = require("./modules/admin/admin.module");
 const community_module_1 = require("./modules/community/community.module");
+const health_module_1 = require("./modules/health/health.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -38,6 +40,7 @@ exports.AppModule = AppModule = __decorate([
             database_module_1.DatabaseModule,
             cache_module_1.CacheModule,
             storage_module_1.StorageModule,
+            qdrant_module_1.QdrantModule,
             auth_module_1.AuthModule,
             product_module_1.ProductModule,
             order_module_1.OrderModule,
@@ -48,6 +51,7 @@ exports.AppModule = AppModule = __decorate([
             inventory_module_1.InventoryModule,
             admin_module_1.AdminModule,
             community_module_1.CommunityModule,
+            health_module_1.HealthModule,
         ],
         controllers: [app_controller_1.AppController],
         providers: [app_service_1.AppService],

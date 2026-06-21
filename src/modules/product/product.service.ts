@@ -268,19 +268,35 @@ export class ProductService {
 
     if (!product) return;
 
-    // Delete files from MinIO S3
+    // Delete files from Storage
     for (const image of product.images) {
       try {
         // Extract object key from URL
-        // URL format: http://localhost:9000/kopdes/products/123-abc.jpg
-        // Object Key: products/123-abc.jpg
-        const parts = image.url.split('/kopdes/');
-        if (parts.length > 1) {
-          const objectKey = parts[1];
+        // Supabase format: https://[ref].supabase.co/storage/v1/object/public/products/123-abc.jpg
+        // Legacy format: http://localhost:9000/kopdes/products/123-abc.jpg
+        let objectKey: string | null = null;
+        try {
+          const urlObj = new URL(image.url);
+          const parts = urlObj.pathname.split('/object/public/');
+          if (parts.length > 1) {
+            objectKey = parts[1];
+          }
+        } catch {
+          // Ignore URL parse error and fallback to string splitting
+        }
+
+        if (!objectKey) {
+          const legacyParts = image.url.split('/kopdes/');
+          if (legacyParts.length > 1) {
+            objectKey = legacyParts[1];
+          }
+        }
+
+        if (objectKey) {
           await this.storageService.deleteFile(objectKey);
         }
       } catch (err) {
-        console.error(`Failed to delete file from MinIO: ${image.url}`, err);
+        console.error(`Failed to delete file from storage: ${image.url}`, err);
       }
     }
 

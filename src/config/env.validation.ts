@@ -44,22 +44,13 @@ class EnvironmentVariables {
   REFRESH_TOKEN_EXPIRES_IN = '7d';
 
   @IsString()
-  MINIO_ENDPOINT!: string;
-
-  @IsNumber()
-  @Min(0)
-  @Max(65535)
-  @IsOptional()
-  MINIO_PORT = 9000;
+  SUPABASE_URL!: string;
 
   @IsString()
-  MINIO_ACCESS_KEY!: string;
+  SUPABASE_ANON_KEY!: string;
 
   @IsString()
-  MINIO_SECRET_KEY!: string;
-
-  @IsString()
-  MINIO_BUCKET!: string;
+  SUPABASE_SERVICE_ROLE_KEY!: string;
 
   @IsString()
   QDRANT_URL!: string;
@@ -111,9 +102,6 @@ export function validate(config: Record<string, unknown>) {
   const convertedConfig = { ...config };
   if (convertedConfig['PORT']) {
     convertedConfig['PORT'] = Number(convertedConfig['PORT']);
-  }
-  if (convertedConfig['MINIO_PORT']) {
-    convertedConfig['MINIO_PORT'] = Number(convertedConfig['MINIO_PORT']);
   }
   if (convertedConfig['SMTP_PORT']) {
     convertedConfig['SMTP_PORT'] = Number(convertedConfig['SMTP_PORT']);

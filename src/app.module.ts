@@ -6,6 +6,7 @@ import { validate } from './config/env.validation';
 import { DatabaseModule } from './database/database.module';
 import { CacheModule } from './cache/cache.module';
 import { StorageModule } from './storage/storage.module';
+import { QdrantModule } from './qdrant/qdrant.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { ProductModule } from './modules/product/product.module';
 import { OrderModule } from './modules/order/order.module';
@@ -16,6 +17,7 @@ import { AIModule } from './modules/ai/ai.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { CommunityModule } from './modules/community/community.module';
+import { HealthModule } from './modules/health/health.module';
 
 @Module({
   imports: [
@@ -26,6 +28,7 @@ import { CommunityModule } from './modules/community/community.module';
     DatabaseModule,
     CacheModule,
     StorageModule,
+    QdrantModule,
     AuthModule,
     ProductModule,
     OrderModule,
@@ -36,6 +39,7 @@ import { CommunityModule } from './modules/community/community.module';
     InventoryModule,
     AdminModule,
     CommunityModule,
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -11,11 +11,9 @@ declare class EnvironmentVariables {
     JWT_SECRET: string;
     JWT_EXPIRES_IN: string;
     REFRESH_TOKEN_EXPIRES_IN: string;
-    MINIO_ENDPOINT: string;
-    MINIO_PORT: number;
-    MINIO_ACCESS_KEY: string;
-    MINIO_SECRET_KEY: string;
-    MINIO_BUCKET: string;
+    SUPABASE_URL: string;
+    SUPABASE_ANON_KEY: string;
+    SUPABASE_SERVICE_ROLE_KEY: string;
     QDRANT_URL: string;
     QDRANT_API_KEY?: string;
     GOOGLE_API_KEY?: string;

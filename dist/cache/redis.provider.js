@@ -7,10 +7,25 @@ exports.REDIS_CLIENT = 'REDIS_CLIENT';
 exports.RedisProvider = {
     provide: exports.REDIS_CLIENT,
     useFactory: (configService) => {
-        const redisUrl = configService.get('REDIS_URL') || 'redis://localhost:6379';
-        const client = new ioredis_1.Redis(redisUrl, {
+        let redisUrl = configService.get('REDIS_URL') || 'redis://localhost:6379';
+        if (redisUrl.includes('-u ')) {
+            redisUrl = redisUrl.split('-u ')[1].trim();
+        }
+        redisUrl = redisUrl.replace(/^['"]|['"]$/g, '');
+        const isUpstash = redisUrl.includes('upstash.io');
+        const connectionOptions = {
             maxRetriesPerRequest: 3,
-        });
+            enableReadyCheck: true,
+        };
+        if (isUpstash || redisUrl.startsWith('rediss://')) {
+            connectionOptions.tls = {
+                rejectUnauthorized: false,
+            };
+            if (redisUrl.startsWith('redis://')) {
+                redisUrl = redisUrl.replace('redis://', 'rediss://');
+            }
+        }
+        const client = new ioredis_1.Redis(redisUrl, connectionOptions);
         client.on('error', (err) => {
             console.error('Redis connection error:', err);
         });

@@ -210,14 +210,28 @@ let ProductService = class ProductService {
             return;
         for (const image of product.images) {
             try {
-                const parts = image.url.split('/kopdes/');
-                if (parts.length > 1) {
-                    const objectKey = parts[1];
+                let objectKey = null;
+                try {
+                    const urlObj = new URL(image.url);
+                    const parts = urlObj.pathname.split('/object/public/');
+                    if (parts.length > 1) {
+                        objectKey = parts[1];
+                    }
+                }
+                catch {
+                }
+                if (!objectKey) {
+                    const legacyParts = image.url.split('/kopdes/');
+                    if (legacyParts.length > 1) {
+                        objectKey = legacyParts[1];
+                    }
+                }
+                if (objectKey) {
                     await this.storageService.deleteFile(objectKey);
                 }
             }
             catch (err) {
-                console.error(`Failed to delete file from MinIO: ${image.url}`, err);
+                console.error(`Failed to delete file from storage: ${image.url}`, err);
             }
         }
         await this.prisma.product.delete({
