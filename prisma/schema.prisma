@@ -1,0 +1,378 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN_KOPDES
+  CUSTOMER
+  UMKM
+  COURIER
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  PROCESSING
+  READY_FOR_DELIVERY
+  OUT_FOR_DELIVERY
+  DELIVERED
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  QRIS
+  COD
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum DeliveryStatus {
+  ASSIGNED
+  ACCEPTED
+  PICKED_UP
+  IN_TRANSIT
+  COURIER_DELIVERED
+  CUSTOMER_CONFIRMED
+  COMPLETED
+}
+
+enum UMKMStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  REJECTED
+  SUSPENDED
+}
+
+enum InventoryTransactionType {
+  IN
+  OUT
+  ADJUSTMENT
+}
+
+model User {
+  id                  String                       @id @default(uuid())
+  email               String                       @unique
+  password            String
+  name                String
+  phone               String?
+  role                Role                         @default(CUSTOMER)
+  createdAt           DateTime                     @default(now())
+  updatedAt           DateTime                     @updatedAt
+  
+  addresses           Address[]
+  cart                Cart?
+  umkm                UMKM?
+  orders              Order[]                      @relation("CustomerOrders")
+  deliveries          Delivery[]                   @relation("CourierDeliveries")
+  reviews             Review[]
+  suggestions         CommunitySuggestion[]
+  notifications       Notification[]
+  auditLogs           AuditLog[]
+  refreshTokens       RefreshToken[]
+  suggestionSupports  CommunitySuggestionSupport[]
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Address {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title         String
+  recipientName String
+  phone         String
+  street        String
+  city          String
+  state         String
+  postalCode    String
+  isDefault     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  orders        Order[]
+}
+
+model Category {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  products     Product[]
+  umkmProducts UMKMProduct[]
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  name        String
+  description String
+  price       Decimal  @db.Decimal(12, 2)
+  stock       Int
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id])
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  images                ProductImage[]
+  reviews               Review[]
+  cartItems             CartItem[]
+  orderItems            OrderItem[]
+  inventoryTransactions InventoryTransaction[]
+}
+
+model ProductImage {
+  id            String       @id @default(uuid())
+  productId     String?
+  product       Product?     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  umkmProductId String?
+  umkmProduct   UMKMProduct? @relation(fields: [umkmProductId], references: [id], onDelete: Cascade)
+  url           String
+  isPrimary     Boolean      @default(false)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+}
+
+model Cart {
+  id        String     @id @default(uuid())
+  userId    String     @unique
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  
+  items     CartItem[]
+}
+
+model CartItem {
+  id            String       @id @default(uuid())
+  cartId        String
+  cart          Cart         @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId     String?
+  product       Product?     @relation(fields: [productId], references: [id])
+  umkmProductId String?
+  umkmProduct   UMKMProduct? @relation(fields: [umkmProductId], references: [id])
+  quantity      Int
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@unique([cartId, productId])
+  @@unique([cartId, umkmProductId])
+}
+
+model Order {
+  id                String        @id @default(uuid())
+  customerId        String
+  customer          User          @relation("CustomerOrders", fields: [customerId], references: [id])
+  totalAmount       Decimal       @db.Decimal(12, 2)
+  status            OrderStatus   @default(PENDING)
+  paymentMethod     PaymentMethod
+  paymentStatus     PaymentStatus @default(PENDING)
+  deliveryAddressId String
+  deliveryAddress   Address       @relation(fields: [deliveryAddressId], references: [id])
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  
+  items             OrderItem[]
+  payment           Payment?
+  invoice           Invoice?
+  delivery          Delivery?
+}
+
+model OrderItem {
+  id            String       @id @default(uuid())
+  orderId       String
+  order         Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId     String?
+  product       Product?     @relation(fields: [productId], references: [id])
+  umkmProductId String?
+  umkmProduct   UMKMProduct? @relation(fields: [umkmProductId], references: [id])
+  quantity      Int
+  price         Decimal      @db.Decimal(12, 2)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+}
+
+model Invoice {
+  id            String   @id @default(uuid())
+  orderId       String   @unique
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  invoiceNumber String   @unique
+  pdfUrl        String?
+  issuedAt      DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  orderId       String        @unique
+  order         Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  method        PaymentMethod
+  status        PaymentStatus @default(PENDING)
+  amount        Decimal       @db.Decimal(12, 2)
+  transactionId String?       @unique
+  qrisCode      String?
+  paidAt        DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+}
+
+model Delivery {
+  id                       String         @id @default(uuid())
+  orderId                  String         @unique
+  order                    Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  courierId                String?
+  courier                  User?          @relation("CourierDeliveries", fields: [courierId], references: [id])
+  status                   DeliveryStatus @default(ASSIGNED)
+  courierMarkedDeliveredAt DateTime?
+  customerConfirmedAt      DateTime?
+  estimatedDeliveryTime    DateTime?
+  actualDeliveryTime       DateTime?
+  createdAt                DateTime       @default(now())
+  updatedAt                DateTime       @updatedAt
+  
+  locations                DeliveryLocation[]
+}
+
+model DeliveryLocation {
+  id         String   @id @default(uuid())
+  deliveryId String
+  delivery   Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  latitude   Float
+  longitude  Float
+  recordedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model UMKM {
+  id              String     @id @default(uuid())
+  userId          String     @unique
+  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessName    String
+  description     String
+  address         String
+  phone           String
+  status          UMKMStatus @default(PENDING_VERIFICATION)
+  rejectionReason String?
+  verifiedAt      DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  
+  products        UMKMProduct[]
+}
+
+model UMKMProduct {
+  id              String    @id @default(uuid())
+  umkmId          String
+  umkm            UMKM      @relation(fields: [umkmId], references: [id], onDelete: Cascade)
+  name            String
+  description     String
+  price           Decimal   @db.Decimal(12, 2)
+  stock           Int
+  categoryId      String
+  category        Category  @relation(fields: [categoryId], references: [id])
+  isApproved      Boolean   @default(false)
+  rejectionReason String?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  images          ProductImage[]
+  cartItems       CartItem[]
+  orderItems      OrderItem[]
+  reviews         Review[]
+}
+
+model Review {
+  id            String       @id @default(uuid())
+  productId     String?
+  product       Product?     @relation(fields: [productId], references: [id])
+  umkmProductId String?
+  umkmProduct   UMKMProduct? @relation(fields: [umkmProductId], references: [id])
+  userId        String
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rating        Int
+  comment       String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+}
+
+model CommunitySuggestion {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productName String
+  category    String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  supporters  CommunitySuggestionSupport[]
+}
+
+model CommunitySuggestionSupport {
+  id           String              @id @default(uuid())
+  suggestionId String
+  suggestion   CommunitySuggestion @relation(fields: [suggestionId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  @@unique([suggestionId, userId])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model InventoryTransaction {
+  id        String                   @id @default(uuid())
+  productId String
+  product   Product                  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  type      InventoryTransactionType
+  quantity  Int
+  reason    String?
+  createdAt DateTime                 @default(now())
+  updatedAt DateTime                 @updatedAt
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  details   String?
+  ipAddress String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
