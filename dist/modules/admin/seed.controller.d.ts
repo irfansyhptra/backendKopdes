@@ -7,6 +7,7 @@ export declare class SeedController {
         usersCount: number;
         categoriesCount: number;
         productsCount: number;
+        umkmProductsCount: number;
         info: string;
         accounts: {
             email: string;

@@ -1,10 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { PasswordHelper } from '../auth/helpers/crypto.helper';
+import { OrderStatus } from '@prisma/client';
+
 
 @Injectable()
 export class SeedService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   async seed() {
     // ═══════════════════════════════════════════════
@@ -135,6 +137,13 @@ export class SeedService {
         name: 'Dimas Prasetya (Kurir)',
         phone: '081500000002',
         role: 'COURIER' as const,
+      },
+      {
+        email: 'pakbud@gmail.com',
+        password: defaultPassword,
+        name: 'Pak Budi (UMKM Mandiri)',
+        phone: '081400000004',
+        role: 'UMKM' as const,
       },
     ];
 
@@ -289,11 +298,157 @@ export class SeedService {
       });
     }
 
+    // ═══════════════════════════════════════════════
+    // 6. UMKM PRODUCTS - Seed products for UMKM sellers
+    // ═══════════════════════════════════════════════
+    const seededUmkms = await this.prisma.uMKM.findMany();
+    const umkmMap = seededUmkms.reduce((acc, u) => {
+      acc[u.businessName] = u.id;
+      return acc;
+    }, {} as Record<string, string>);
+
+    const umkmProductsData = [
+      {
+        businessName: 'UMKM Jaya Abadi',
+        name: 'Madu Randu Asli Hutan',
+        description: 'Madu randu murni dari peternakan lebah hutan lokal, berkhasiat tinggi.',
+        price: 90000,
+        stock: 12,
+        categoryName: 'Makanan',
+        images: ['https://picsum.photos/id/1080/400/300'],
+      },
+      {
+        businessName: 'Warung Sari Rasa',
+        name: 'Kopi Lanang Robusta',
+        description: 'Kopi lanang robusta premium dengan aroma kuat dan rasa mantap.',
+        price: 55000,
+        stock: 24,
+        categoryName: 'Minuman',
+        images: ['https://picsum.photos/id/1060/400/300'],
+      },
+      {
+        businessName: 'UMKM Jaya Abadi',
+        name: 'Keripik Pisang Tanduk Pedas Manis',
+        description: 'Keripik pisang tanduk renyah dengan rasa pedas manis yang pas.',
+        price: 15000,
+        stock: 3, // Low stock on purpose
+        categoryName: 'Cemilan',
+        images: ['https://picsum.photos/id/1070/400/300'],
+      },
+      {
+        businessName: 'Kerajinan Bambu Nusantara',
+        name: 'Keranjang Rajut Bambu Estetik',
+        description: 'Keranjang serbaguna dari rajutan bambu tipis berkualitas.',
+        price: 38000,
+        stock: 8,
+        categoryName: 'Kerajinan',
+        images: ['https://picsum.photos/id/1040/400/300'],
+      },
+    ];
+
+    let seededUmkmProductsCount = 0;
+    for (const p of umkmProductsData) {
+      const umkmId = umkmMap[p.businessName];
+      const categoryId = catMap[p.categoryName];
+      if (!umkmId || !categoryId) continue;
+
+      const umkmProduct = await this.prisma.uMKMProduct.create({
+        data: {
+          umkmId,
+          name: p.name,
+          description: p.description,
+          price: p.price,
+          stock: p.stock,
+          categoryId,
+          isApproved: true,
+          isActive: true,
+        },
+      });
+
+      const imagesData = p.images.map((url, i) => ({
+        umkmProductId: umkmProduct.id,
+        url,
+        isPrimary: i === 0,
+      }));
+
+      await this.prisma.productImage.createMany({
+        data: imagesData,
+      });
+
+      seededUmkmProductsCount++;
+    }
+
+    // ═══════════════════════════════════════════════
+    // 7. ORDER ITEMS FOR UMKM - Create some orders containing UMKM products
+    // ═══════════════════════════════════════════════
+    const customer = createdUsers['customer@kopdes.co'];
+    const address = await this.prisma.address.findFirst({ where: { userId: customer.id } });
+    const umkmProdList = await this.prisma.uMKMProduct.findMany({ include: { images: true } });
+
+    if (customer && address && umkmProdList.length > 0) {
+      // Create a completed order
+      const order1 = await this.prisma.order.create({
+        data: {
+          customerId: customer.id,
+          totalAmount: 180000,
+          status: OrderStatus.COMPLETED,
+          paymentMethod: 'QRIS',
+          paymentStatus: 'PAID',
+          deliveryAddressId: address.id,
+          createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), // 2 days ago
+        },
+      });
+
+      await this.prisma.orderItem.create({
+        data: {
+          orderId: order1.id,
+          umkmProductId: umkmProdList[0].id, // Madu Randu
+          quantity: 2,
+          price: umkmProdList[0].price,
+        },
+      });
+
+      // Create a payment record
+      await this.prisma.payment.create({
+        data: {
+          orderId: order1.id,
+          method: 'QRIS',
+          status: 'PAID',
+          amount: 180000,
+          transactionId: `TX-${Date.now()}-1`,
+          paidAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+        },
+      });
+
+      // Create a pending order for dashboard notification testing
+      const order2 = await this.prisma.order.create({
+        data: {
+          customerId: customer.id,
+          totalAmount: 55000,
+          status: OrderStatus.PENDING,
+          paymentMethod: 'COD',
+          paymentStatus: 'PENDING',
+          deliveryAddressId: address.id,
+          createdAt: new Date(),
+        },
+      });
+
+      await this.prisma.orderItem.create({
+        data: {
+          orderId: order2.id,
+          umkmProductId: umkmProdList[1].id, // Kopi Lanang
+          quantity: 1,
+          price: umkmProdList[1].price,
+        },
+      });
+    }
+
     return {
       message: 'Seeding completed successfully!',
       usersCount: usersData.length,
       categoriesCount: categories.length,
       productsCount: productsData.length,
+      umkmProductsCount: seededUmkmProductsCount,
       info: 'All users have password: password123',
       accounts: usersData.map(u => ({ email: u.email, role: u.role })),
     };

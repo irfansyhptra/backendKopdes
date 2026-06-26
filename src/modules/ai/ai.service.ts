@@ -27,6 +27,7 @@ export class AIService {
   }
 
   async getEmbedding(text: string): Promise<number[]> {
+    this.logger.log(`🤖 AI SERVICE: Generating embedding for text snippet: "${text.substring(0, 50)}..."`);
     try {
       const apiKey = this.configService.get<string>('GOOGLE_API_KEY');
       // Detect suspended or dummy keys early to fallback without API network roundtrip failures
@@ -35,13 +36,21 @@ export class AIService {
       }
       const genAI = this.getGenAI();
       const model = genAI.getGenerativeModel({ model: 'text-embedding-004' });
-      const result = await model.embedContent(text);
+      
+      this.logger.log(`🤖 AI SERVICE: Sending text-embedding-004 request to Gemini API...`);
+      const embedPromise = model.embedContent(text);
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Embedding request timeout')), 15000)
+      );
+      
+      const result: any = await Promise.race([embedPromise, timeoutPromise]);
       if (!result?.embedding?.values) {
         throw new Error('Invalid embedding response from Gemini API');
       }
+      this.logger.log(`🤖 AI SERVICE: Embedding successfully generated from Gemini. Vector size: ${result.embedding.values.length}`);
       return result.embedding.values;
     } catch (err: any) {
-      this.logger.warn(`Failed to generate real embedding, using deterministic mock vector fallback. Reason: ${err.message}`);
+      this.logger.warn(`🤖 AI SERVICE: Failed to generate real embedding, using deterministic mock vector fallback. Reason: ${err.message}`);
 
       // Generate a deterministic mock vector of size 1536 based on text hash
       const crypto = require('crypto');
@@ -57,6 +66,7 @@ export class AIService {
   }
 
   private async generateLLMResponse(promptText: string): Promise<string> {
+    this.logger.log(`🤖 AI SERVICE: Requesting LLM response. Prompt length: ${promptText.length} characters`);
     try {
       const apiKey = this.configService.get<string>('GOOGLE_API_KEY');
       if (!apiKey || apiKey.startsWith('your-') || apiKey === 'AIzaSyCeeR_w3EokChW-P4mz_BAHNy2znGgTZ1o') {
@@ -64,50 +74,38 @@ export class AIService {
       }
       const genAI = this.getGenAI();
       const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-      const result = await model.generateContent(promptText);
-      return result.response.text();
+      
+      this.logger.log(`🤖 AI SERVICE: Sending gemini-1.5-flash generation request to Google...`);
+      const generatePromise = model.generateContent(promptText);
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('LLM generation request timeout')), 15000)
+      );
+      
+      const result: any = await Promise.race([generatePromise, timeoutPromise]);
+      const textResponse = result.response.text();
+      this.logger.log(`🤖 AI SERVICE: LLM generated response successfully from Gemini: "${textResponse.substring(0, 100)}..."`);
+      return textResponse;
     } catch (err: any) {
-      this.logger.warn(`Failed to generate real LLM response, using simulated response. Reason: ${err.message}`);
+      this.logger.warn(`🤖 AI SERVICE: Failed to generate real LLM response, using simulated response. Reason: ${err.message}`);
 
       // Return high quality simulation responses depending on prompt task signature
+      let simResponse = '';
       if (promptText.includes('Asisten Koperasi Desa')) {
-        return `[SIMULASI ASISTEN KOPDES]\n\nKoperasi Desa (KOPDES) Sinduadi didirikan untuk menyejahterakan warga melalui digitalisasi UMKM lokal serta pembagian Sisa Hasil Usaha (SHU) secara transparan. Rapat Anggota Tahunan (RAT) rutin diadakan setiap awal tahun (sebelum Maret) untuk mempertanggungjawabkan kinerja pengurus.\n\nUntuk pengajuan modal UMKM, Anda memerlukan SKU RT/RW, KTP domisili lokal, dan status keanggotaan aktif minimal 3 bulan.`;
+        simResponse = `[SIMULASI ASISTEN KOPDES]\n\nKoperasi Desa (KOPDES) Sinduadi didirikan untuk menyejahterakan warga melalui digitalisasi UMKM lokal serta pembagian Sisa Hasil Usaha (SHU) secara transparan. Rapat Anggota Tahunan (RAT) rutin diadakan setiap awal tahun (sebelum Maret) untuk mempertanggungjawabkan kinerja pengurus.\n\nUntuk pengajuan modal UMKM, Anda memerlukan SKU RT/RW, KTP domisili lokal, dan status keanggotaan aktif minimal 3 bulan.`;
+      } else if (promptText.includes('AI Management Assistant')) {
+        simResponse = `### Laporan Simulasi Analisis Manajemen KOPDES\n\n* **Analisis Data Pengguna & Pendapatan**: Aktivitas registrasi berjalan stabil dengan pertumbuhan anggota yang baik. Total pendapatan terverifikasi dari sistem pembayaran sukses berjalan lancar.\n* **Rekomendasi Manajemen**:\n  1. Segera lakukan verifikasi UMKM yang berstatus 'PENDING_VERIFICATION' untuk memperluas varian katalog produk.\n  2. Optimalkan kampanye belanja mingguan guna menaikkan volume transaksi di pasar online.`;
+      } else if (promptText.includes('Community Demand Intelligence')) {
+        simResponse = `### Analisis Simulasi Usulan Produk Komunitas\n\n1. **Kategori Paling Diminati**: Bahan Pokok dan Cemilan Tradisional merupakan kategori produk yang paling banyak diusulkan dan didukung anggota.\n2. **Top 3 Usulan Produk Anggota**:\n   - Beras Merah Organik (Dukungan Komunitas Tinggi)\n   - Jamu Tradisional Curah (Dukungan Komunitas Sedang)\n   - Anyaman Bambu Dekoratif (Dukungan Komunitas Sedang)\n3. **Rencana Aksi Pengadaan**: Pengurus disarankan segera menggandeng kelompok tani desa Sinduadi untuk pengadaan beras organik dalam volume grosir.`;
+      } else if (promptText.includes('Inventory Intelligence')) {
+        simResponse = `### Rencana Simulasi Pengisian Ulang Inventaris\n\n1. **Prioritas Pengadaan (Stok Kritis)**:\n   - Produk dengan stok <= 10 unit harus segera dipesan ulang guna menghindari kekosongan persediaan barang di pasar online.\n2. **Kuantitas Pemesanan yang Disarankan**:\n   - Rata-rata restock 20-50 unit per produk kritis, disesuaikan dengan kapasitas penyimpanan gudang koperasi.\n3. **Rekomendasi Keuangan**: Alokasikan Rp 2.500.000 s/d Rp 5.000.000 dari kas operasional untuk pembiayaan restock produk lokal UMKM terpopuler.`;
+      } else if (promptText.includes('Spesialis Deteksi Anomali Inventaris')) {
+        simResponse = `### Laporan Simulasi Deteksi Anomali Inventaris\n\n* **Pemeriksaan Transaksi**: Ditemukan beberapa transaksi jenis 'ADJUSTMENT' tanpa keterangan/reason tertulis. (Tingkat Risiko: Sedang).\n* **Pemeriksaan Audit Log**: Log perubahan status order menunjukkan keselarasan yang baik, namun disarankan untuk membatasi izin akses perubahan stok inventaris hanya untuk staf terdaftar.\n* **Saran Tindakan**: Tambahkan validasi wajib (required field) pada kolom 'reason' untuk setiap transaksi penyesuaian stok di dashboard admin.`;
+      } else {
+        simResponse = `[SIMULASI KOPDES AI] Sistem AI saat ini berjalan dalam mode simulasi karena API Key diblokir atau belum dikonfigurasi. Harap perbarui GOOGLE_API_KEY pada berkas .env Anda untuk mengaktifkan model Gemini asli.`;
       }
-      if (promptText.includes('AI Management Assistant')) {
-        return `### Laporan Simulasi Analisis Manajemen KOPDES
 
-* **Analisis Data Pengguna & Pendapatan**: Aktivitas registrasi berjalan stabil dengan pertumbuhan anggota yang baik. Total pendapatan terverifikasi dari sistem pembayaran sukses berjalan lancar.
-* **Rekomendasi Manajemen**:
-  1. Segera lakukan verifikasi UMKM yang berstatus 'PENDING_VERIFICATION' untuk memperluas varian katalog produk.
-  2. Optimalkan kampanye belanja mingguan guna menaikkan volume transaksi di pasar online.`;
-      }
-      if (promptText.includes('Community Demand Intelligence')) {
-        return `### Analisis Simulasi Usulan Produk Komunitas
-
-1. **Kategori Paling Diminati**: Bahan Pokok dan Cemilan Tradisional merupakan kategori produk yang paling banyak diusulkan dan didukung anggota.
-2. **Top 3 Usulan Produk Anggota**:
-   - Beras Merah Organik (Dukungan Komunitas Tinggi)
-   - Jamu Tradisional Curah (Dukungan Komunitas Sedang)
-   - Anyaman Bambu Dekoratif (Dukungan Komunitas Sedang)
-3. **Rencana Aksi Pengadaan**: Pengurus disarankan segera menggandeng kelompok tani desa Sinduadi untuk pengadaan beras organik dalam volume grosir.`;
-      }
-      if (promptText.includes('Inventory Intelligence')) {
-        return `### Rencana Simulasi Pengisian Ulang Inventaris
-
-1. **Prioritas Pengadaan (Stok Kritis)**:
-   - Produk dengan stok <= 10 unit harus segera dipesan ulang guna menghindari kekosongan persediaan barang di pasar online.
-2. **Kuantitas Pemesanan yang Disarankan**:
-   - Rata-rata restock 20-50 unit per produk kritis, disesuaikan dengan kapasitas penyimpanan gudang koperasi.
-3. **Rekomendasi Keuangan**: Alokasikan Rp 2.500.000 s/d Rp 5.000.000 dari kas operasional untuk pembiayaan restock produk lokal UMKM terpopuler.`;
-      }
-      if (promptText.includes('Spesialis Deteksi Anomali Inventaris')) {
-        return `### Laporan Simulasi Deteksi Anomali Inventaris
-
-* **Pemeriksaan Transaksi**: Ditemukan beberapa transaksi jenis 'ADJUSTMENT' tanpa keterangan/reason tertulis. (Tingkat Risiko: Sedang).
-* **Pemeriksaan Audit Log**: Log perubahan status order menunjukkan keselarasan yang baik, namun disarankan untuk membatasi izin akses perubahan stok inventaris hanya untuk staf terdaftar.
-* **Saran Tindakan**: Tambahkan validasi wajib (required field) pada kolom 'reason' untuk setiap transaksi penyesuaian stok di dashboard admin.`;
-      }
-      return `[SIMULASI KOPDES AI] Sistem AI saat ini berjalan dalam mode simulasi karena API Key diblokir atau belum dikonfigurasi. Harap perbarui GOOGLE_API_KEY pada berkas .env Anda untuk mengaktifkan model Gemini asli.`;
+      this.logger.log(`🤖 AI SERVICE: Generated simulation response payload: "${simResponse.substring(0, 100)}..."`);
+      return simResponse;
     }
   }
 

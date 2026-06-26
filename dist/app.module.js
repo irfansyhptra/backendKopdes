@@ -27,6 +27,7 @@ const inventory_module_1 = require("./modules/inventory/inventory.module");
 const admin_module_1 = require("./modules/admin/admin.module");
 const community_module_1 = require("./modules/community/community.module");
 const health_module_1 = require("./modules/health/health.module");
+const seller_module_1 = require("./modules/seller/seller.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -47,6 +48,7 @@ exports.AppModule = AppModule = __decorate([
             cart_module_1.CartModule,
             delivery_module_1.DeliveryModule,
             umkm_module_1.UMKMModule,
+            seller_module_1.SellerModule,
             ai_module_1.AIModule,
             inventory_module_1.InventoryModule,
             admin_module_1.AdminModule,

@@ -18,6 +18,7 @@ import { InventoryModule } from './modules/inventory/inventory.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { CommunityModule } from './modules/community/community.module';
 import { HealthModule } from './modules/health/health.module';
+import { SellerModule } from './modules/seller/seller.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { HealthModule } from './modules/health/health.module';
     CartModule,
     DeliveryModule,
     UMKMModule,
+    SellerModule,
     AIModule,
     InventoryModule,
     AdminModule,
@@ -45,3 +47,4 @@ import { HealthModule } from './modules/health/health.module';
   providers: [AppService],
 })
 export class AppModule {}
+
