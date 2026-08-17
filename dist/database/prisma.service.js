@@ -12,6 +12,16 @@ const client_1 = require("@prisma/client");
 let PrismaService = class PrismaService extends client_1.PrismaClient {
     async onModuleInit() {
         await this.$connect();
+        try {
+            await this.$executeRawUnsafe(`
+        ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "isPreOrderAllowed" BOOLEAN NOT NULL DEFAULT false;
+        ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "preOrderAvailableAt" TIMESTAMP(3);
+        ALTER TABLE "UMKMProduct" ADD COLUMN IF NOT EXISTS "isPreOrderAllowed" BOOLEAN NOT NULL DEFAULT false;
+        ALTER TABLE "UMKMProduct" ADD COLUMN IF NOT EXISTS "preOrderAvailableAt" TIMESTAMP(3);
+      `);
+        }
+        catch {
+        }
     }
     async onModuleDestroy() {
         await this.$disconnect();

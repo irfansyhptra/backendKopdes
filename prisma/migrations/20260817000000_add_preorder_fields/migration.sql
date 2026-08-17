@@ -1,0 +1,7 @@
+-- AlterTable
+ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "isPreOrderAllowed" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN IF NOT EXISTS "preOrderAvailableAt" TIMESTAMP(3);
+
+-- AlterTable
+ALTER TABLE "UMKMProduct" ADD COLUMN IF NOT EXISTS "isPreOrderAllowed" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN IF NOT EXISTS "preOrderAvailableAt" TIMESTAMP(3);
