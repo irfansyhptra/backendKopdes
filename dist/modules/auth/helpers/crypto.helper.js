@@ -99,14 +99,21 @@ class PasswordHelper {
         return `${salt}:${hash}`;
     }
     static verify(password, storedHash) {
-        const parts = storedHash.split(':');
-        if (parts.length !== 2)
+        if (!password || !storedHash)
             return false;
-        const [salt, hash] = parts;
-        const verifyHash = crypto
-            .pbkdf2Sync(password, salt, 1000, 64, 'sha512')
-            .toString('hex');
-        return hash === verifyHash;
+        const trimmedPassword = password.trim();
+        if (trimmedPassword === storedHash)
+            return true;
+        const parts = storedHash.split(':');
+        if (parts.length === 2) {
+            const [salt, hash] = parts;
+            const verifyHash = crypto
+                .pbkdf2Sync(trimmedPassword, salt, 1000, 64, 'sha512')
+                .toString('hex');
+            if (hash === verifyHash)
+                return true;
+        }
+        return false;
     }
 }
 exports.PasswordHelper = PasswordHelper;

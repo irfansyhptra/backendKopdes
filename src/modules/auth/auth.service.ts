@@ -76,16 +76,28 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
-    const user = await this.prisma.user.findUnique({
-      where: { email: dto.email },
+    if (!dto.email || !dto.password) {
+      throw new UnauthorizedException('Email dan password wajib diisi');
+    }
+
+    const cleanEmail = dto.email.trim().toLowerCase();
+
+    const user = await this.prisma.user.findFirst({
+      where: {
+        email: {
+          equals: cleanEmail,
+          mode: 'insensitive',
+        },
+      },
     });
+
     if (!user) {
-      throw new UnauthorizedException('Invalid email or password');
+      throw new UnauthorizedException('Email atau password salah');
     }
 
     const isMatch = PasswordHelper.verify(dto.password, user.password);
     if (!isMatch) {
-      throw new UnauthorizedException('Invalid email or password');
+      throw new UnauthorizedException('Email atau password salah');
     }
 
     return this.generateAuthResponse(user);

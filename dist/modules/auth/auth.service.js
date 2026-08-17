@@ -70,15 +70,24 @@ let AuthService = class AuthService {
         return this.generateAuthResponse(user);
     }
     async login(dto) {
-        const user = await this.prisma.user.findUnique({
-            where: { email: dto.email },
+        if (!dto.email || !dto.password) {
+            throw new common_1.UnauthorizedException('Email dan password wajib diisi');
+        }
+        const cleanEmail = dto.email.trim().toLowerCase();
+        const user = await this.prisma.user.findFirst({
+            where: {
+                email: {
+                    equals: cleanEmail,
+                    mode: 'insensitive',
+                },
+            },
         });
         if (!user) {
-            throw new common_1.UnauthorizedException('Invalid email or password');
+            throw new common_1.UnauthorizedException('Email atau password salah');
         }
         const isMatch = crypto_helper_1.PasswordHelper.verify(dto.password, user.password);
         if (!isMatch) {
-            throw new common_1.UnauthorizedException('Invalid email or password');
+            throw new common_1.UnauthorizedException('Email atau password salah');
         }
         return this.generateAuthResponse(user);
     }

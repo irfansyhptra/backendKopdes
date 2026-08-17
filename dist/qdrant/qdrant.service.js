@@ -92,10 +92,10 @@ let QdrantService = QdrantService_1 = class QdrantService {
     async checkHealth() {
         try {
             const response = await this.client.getCollections();
-            return !!response.collections;
+            return !!response?.collections;
         }
         catch (err) {
-            this.logger.error('Qdrant health check failed:', err);
+            this.logger.warn(`Qdrant health check unavailable: ${err?.message || err}`);
             return false;
         }
     }

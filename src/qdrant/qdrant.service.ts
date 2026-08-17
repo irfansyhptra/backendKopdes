@@ -77,10 +77,11 @@ export class QdrantService {
   async checkHealth(): Promise<boolean> {
     try {
       const response = await this.client.getCollections();
-      return !!response.collections;
-    } catch (err) {
-      this.logger.error('Qdrant health check failed:', err);
+      return !!response?.collections;
+    } catch (err: any) {
+      this.logger.warn(`Qdrant health check unavailable: ${err?.message || err}`);
       return false;
     }
   }
 }
+
