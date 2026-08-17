@@ -19,25 +19,58 @@ export class CartService {
   }
 
   async getOrCreateCart(userId: string) {
-    let cart = await this.prisma.cart.findUnique({
-      where: { userId },
-      include: {
-        items: {
-          include: {
-            product: {
-              include: {
-                images: true,
+    let cart;
+    try {
+      cart = await this.prisma.cart.findUnique({
+        where: { userId },
+        include: {
+          items: {
+            include: {
+              product: {
+                include: {
+                  images: true,
+                },
               },
-            },
-            umkmProduct: {
-              include: {
-                images: true,
+              umkmProduct: {
+                include: {
+                  images: true,
+                },
               },
             },
           },
         },
-      },
-    });
+      });
+    } catch (err: any) {
+      if (err?.code === 'P2022') {
+        await this.prisma.$executeRawUnsafe(`
+          ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "isPreOrderAllowed" BOOLEAN NOT NULL DEFAULT false;
+          ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "preOrderAvailableAt" TIMESTAMP(3);
+          ALTER TABLE "UMKMProduct" ADD COLUMN IF NOT EXISTS "isPreOrderAllowed" BOOLEAN NOT NULL DEFAULT false;
+          ALTER TABLE "UMKMProduct" ADD COLUMN IF NOT EXISTS "preOrderAvailableAt" TIMESTAMP(3);
+        `);
+        cart = await this.prisma.cart.findUnique({
+          where: { userId },
+          include: {
+            items: {
+              include: {
+                product: {
+                  include: {
+                    images: true,
+                  },
+                },
+                umkmProduct: {
+                  include: {
+                    images: true,
+                  },
+                },
+              },
+            },
+          },
+        });
+      } else {
+        throw err;
+      }
+    }
 
     if (!cart) {
       cart = await this.prisma.cart.create({
