@@ -1,4 +1,4 @@
-import { Controller, Post, Body, UseGuards, Logger } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, Logger, Req } from '@nestjs/common';
 import { AIService } from './ai.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -29,10 +29,10 @@ export class AIController {
     }
   }
 
-  // 2. AI Management Assistant: Restricted to Admins & Super Admins
+  // 2. AI Management Assistant: Restricted to Staf/Admins & Super Admins
   @Post('management')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN_KOPDES, Role.SUPER_ADMIN)
+  @Roles(Role.ADMIN_KOPDES, Role.PEGAWAI_KOPDES, Role.SUPER_ADMIN)
   async chatManagement(@Body('message') message: string) {
     this.logger.log(`🤖 AI CONTROLLER: Incoming Request POST /ai/management. Message: "${message}"`);
     if (!message) {
@@ -49,10 +49,10 @@ export class AIController {
     }
   }
 
-  // 3. Community Demand Intelligence: Restricted to Admins & Super Admins
+  // 3. Community Demand Intelligence: Restricted to Staf/Admins & Super Admins
   @Post('community')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN_KOPDES, Role.SUPER_ADMIN)
+  @Roles(Role.ADMIN_KOPDES, Role.PEGAWAI_KOPDES, Role.SUPER_ADMIN)
   async analyzeCommunityDemands() {
     this.logger.log(`🤖 AI CONTROLLER: Incoming Request POST /ai/community.`);
     try {
@@ -65,10 +65,10 @@ export class AIController {
     }
   }
 
-  // 4. Inventory Intelligence: Restricted to Admins & Super Admins
+  // 4. Inventory Intelligence: Restricted to Staf/Admins & Super Admins
   @Post('inventory')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN_KOPDES, Role.SUPER_ADMIN)
+  @Roles(Role.ADMIN_KOPDES, Role.PEGAWAI_KOPDES, Role.SUPER_ADMIN)
   async getInventoryReplenishmentOptions() {
     this.logger.log(`🤖 AI CONTROLLER: Incoming Request POST /ai/inventory.`);
     try {
@@ -81,10 +81,10 @@ export class AIController {
     }
   }
 
-  // 5. Inventory Anomaly Detection: Restricted to Admins & Super Admins
+  // 5. Inventory Anomaly Detection: Restricted to Staf/Admins & Super Admins
   @Post('anomaly')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN_KOPDES, Role.SUPER_ADMIN)
+  @Roles(Role.ADMIN_KOPDES, Role.PEGAWAI_KOPDES, Role.SUPER_ADMIN)
   async detectInventoryAnomalies() {
     this.logger.log(`🤖 AI CONTROLLER: Incoming Request POST /ai/anomaly.`);
     try {
@@ -93,6 +93,39 @@ export class AIController {
       return { success: true, data: response, response: response };
     } catch (err: any) {
       this.logger.error(`🤖 AI CONTROLLER: Error in /ai/anomaly: ${err.message}`, err.stack);
+      throw err;
+    }
+  }
+
+  // 6. AI UMKM Assistant: Restricted to UMKM sellers
+  @Post('umkm')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.UMKM)
+  async chatUMKM(@Req() req: any, @Body('message') message: string) {
+    this.logger.log(`🤖 AI CONTROLLER: Incoming Request POST /ai/umkm from user ${req.user.id}`);
+    if (!message) {
+      return { success: false, error: 'Message content is required' };
+    }
+    try {
+      const response = await this.aiService.chatUMKMAssistant(req.user.id, message);
+      return { success: true, data: response, response };
+    } catch (err: any) {
+      this.logger.error(`🤖 AI CONTROLLER: Error in /ai/umkm: ${err.message}`, err.stack);
+      throw err;
+    }
+  }
+
+  // 7. AI Executive Dashboard Summary: Consolidated AI overview
+  @Get('executive-dashboard')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN_KOPDES, Role.PEGAWAI_KOPDES, Role.SUPER_ADMIN)
+  async getExecutiveDashboard() {
+    this.logger.log(`🤖 AI CONTROLLER: Incoming Request GET /ai/executive-dashboard.`);
+    try {
+      const response = await this.aiService.getExecutiveDashboardSummary();
+      return { success: true, data: response };
+    } catch (err: any) {
+      this.logger.error(`🤖 AI CONTROLLER: Error in /ai/executive-dashboard: ${err.message}`, err.stack);
       throw err;
     }
   }
@@ -113,3 +146,4 @@ export class AIController {
     }
   }
 }
+

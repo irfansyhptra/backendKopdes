@@ -60,6 +60,15 @@ let OrderController = class OrderController {
         const timeline = await this.orderService.getTimeline(orderId);
         return { success: true, timeline };
     }
+    async confirmReceipt(req, orderId) {
+        const userId = req.user.id;
+        const order = await this.orderService.confirmCustomerDelivery(userId, orderId);
+        return {
+            success: true,
+            message: 'Konfirmasi penerimaan barang berhasil. Transaksi pengiriman selesai.',
+            order,
+        };
+    }
 };
 exports.OrderController = OrderController;
 __decorate([
@@ -118,6 +127,14 @@ __decorate([
     __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", Promise)
 ], OrderController.prototype, "getTimeline", null);
+__decorate([
+    (0, common_1.Post)(':id/confirm-receipt'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", Promise)
+], OrderController.prototype, "confirmReceipt", null);
 exports.OrderController = OrderController = __decorate([
     (0, common_1.Controller)('orders'),
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),

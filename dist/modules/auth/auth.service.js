@@ -13,7 +13,9 @@ exports.AuthService = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../database/prisma.service");
 const config_1 = require("@nestjs/config");
+const client_1 = require("@prisma/client");
 const crypto_helper_1 = require("./helpers/crypto.helper");
+const SELF_REGISTER_ROLES = [client_1.Role.CUSTOMER, client_1.Role.UMKM, client_1.Role.COURIER];
 let AuthService = class AuthService {
     prisma;
     configService;
@@ -45,6 +47,10 @@ let AuthService = class AuthService {
         }
     }
     async register(dto) {
+        const requestedRole = dto.role ?? client_1.Role.CUSTOMER;
+        if (!SELF_REGISTER_ROLES.includes(requestedRole)) {
+            throw new common_1.ForbiddenException('Peran ini tidak dapat mendaftar sendiri. Akun dibuat oleh Super Admin.');
+        }
         const existing = await this.prisma.user.findUnique({
             where: { email: dto.email },
         });
@@ -58,7 +64,7 @@ let AuthService = class AuthService {
                 password: hashedPassword,
                 name: dto.name,
                 phone: dto.phone,
-                role: dto.role ?? 'CUSTOMER',
+                role: requestedRole,
             },
         });
         return this.generateAuthResponse(user);

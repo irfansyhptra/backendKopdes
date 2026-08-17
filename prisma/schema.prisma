@@ -10,6 +10,7 @@ generator client {
 enum Role {
   SUPER_ADMIN
   ADMIN_KOPDES
+  PEGAWAI_KOPDES
   CUSTOMER
   UMKM
   COURIER
@@ -82,6 +83,9 @@ model User {
   auditLogs           AuditLog[]
   refreshTokens       RefreshToken[]
   suggestionSupports  CommunitySuggestionSupport[]
+  conversationsAsA    Conversation[]               @relation("ConvUser1")
+  conversationsAsB    Conversation[]               @relation("ConvUser2")
+  chatMessages        ChatMessage[]
 }
 
 model RefreshToken {
@@ -131,9 +135,11 @@ model Product {
   stock       Int
   categoryId  String
   category    Category @relation(fields: [categoryId], references: [id])
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  isActive            Boolean   @default(true)
+  isPreOrderAllowed   Boolean   @default(false)
+  preOrderAvailableAt DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
   
   images                ProductImage[]
   reviews               Review[]
@@ -295,9 +301,11 @@ model UMKMProduct {
   category        Category  @relation(fields: [categoryId], references: [id])
   isApproved      Boolean   @default(false)
   rejectionReason String?
-  isActive        Boolean   @default(true)
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  isActive            Boolean   @default(true)
+  isPreOrderAllowed   Boolean   @default(false)
+  preOrderAvailableAt DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
   
   images          ProductImage[]
   cartItems       CartItem[]
@@ -375,4 +383,35 @@ model AuditLog {
   ipAddress String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Percakapan 1-1 (mis. Admin Kopdes ↔ UMKM / Customer).
+// user1Id selalu diurutkan lebih kecil dari user2Id agar unik & idempoten.
+model Conversation {
+  id            String        @id @default(uuid())
+  user1Id       String
+  user1         User          @relation("ConvUser1", fields: [user1Id], references: [id], onDelete: Cascade)
+  user2Id       String
+  user2         User          @relation("ConvUser2", fields: [user2Id], references: [id], onDelete: Cascade)
+  lastMessageAt DateTime      @default(now())
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  messages      ChatMessage[]
+
+  @@unique([user1Id, user2Id])
+}
+
+model ChatMessage {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       String
+  sender         User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  content        String
+  readAt         DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([conversationId])
 }

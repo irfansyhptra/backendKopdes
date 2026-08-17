@@ -19,6 +19,8 @@ import { AdminModule } from './modules/admin/admin.module';
 import { CommunityModule } from './modules/community/community.module';
 import { HealthModule } from './modules/health/health.module';
 import { SellerModule } from './modules/seller/seller.module';
+import { ChatModule } from './modules/chat/chat.module';
+import { SuperAdminModule } from './modules/superadmin/superadmin.module';
 
 @Module({
   imports: [
@@ -42,6 +44,8 @@ import { SellerModule } from './modules/seller/seller.module';
     AdminModule,
     CommunityModule,
     HealthModule,
+    ChatModule,
+    SuperAdminModule,
   ],
   controllers: [AppController],
   providers: [AppService],

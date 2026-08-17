@@ -8,10 +8,20 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.UMKMModule = void 0;
 const common_1 = require("@nestjs/common");
+const config_1 = require("@nestjs/config");
+const database_module_1 = require("../../database/database.module");
+const cache_module_1 = require("../../cache/cache.module");
+const umkm_controller_1 = require("./umkm.controller");
+const umkm_service_1 = require("./umkm.service");
 let UMKMModule = class UMKMModule {
 };
 exports.UMKMModule = UMKMModule;
 exports.UMKMModule = UMKMModule = __decorate([
-    (0, common_1.Module)({})
+    (0, common_1.Module)({
+        imports: [database_module_1.DatabaseModule, cache_module_1.CacheModule, config_1.ConfigModule],
+        controllers: [umkm_controller_1.UmkmController],
+        providers: [umkm_service_1.UmkmService],
+        exports: [umkm_service_1.UmkmService],
+    })
 ], UMKMModule);
 //# sourceMappingURL=umkm.module.js.map

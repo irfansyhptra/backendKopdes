@@ -31,6 +31,8 @@ export declare class CartService {
                 stock: number;
                 categoryId: string;
                 isActive: boolean;
+                isPreOrderAllowed: boolean;
+                preOrderAvailableAt: Date | null;
             }) | null;
             umkmProduct: ({
                 images: {
@@ -52,6 +54,8 @@ export declare class CartService {
                 stock: number;
                 categoryId: string;
                 isActive: boolean;
+                isPreOrderAllowed: boolean;
+                preOrderAvailableAt: Date | null;
                 umkmId: string;
                 isApproved: boolean;
                 rejectionReason: string | null;
@@ -94,6 +98,8 @@ export declare class CartService {
                 stock: number;
                 categoryId: string;
                 isActive: boolean;
+                isPreOrderAllowed: boolean;
+                preOrderAvailableAt: Date | null;
             }) | null;
             umkmProduct: ({
                 images: {
@@ -115,6 +121,8 @@ export declare class CartService {
                 stock: number;
                 categoryId: string;
                 isActive: boolean;
+                isPreOrderAllowed: boolean;
+                preOrderAvailableAt: Date | null;
                 umkmId: string;
                 isApproved: boolean;
                 rejectionReason: string | null;
@@ -156,6 +164,8 @@ export declare class CartService {
                 stock: number;
                 categoryId: string;
                 isActive: boolean;
+                isPreOrderAllowed: boolean;
+                preOrderAvailableAt: Date | null;
             }) | null;
             umkmProduct: ({
                 images: {
@@ -177,6 +187,8 @@ export declare class CartService {
                 stock: number;
                 categoryId: string;
                 isActive: boolean;
+                isPreOrderAllowed: boolean;
+                preOrderAvailableAt: Date | null;
                 umkmId: string;
                 isApproved: boolean;
                 rejectionReason: string | null;
@@ -218,6 +230,8 @@ export declare class CartService {
                 stock: number;
                 categoryId: string;
                 isActive: boolean;
+                isPreOrderAllowed: boolean;
+                preOrderAvailableAt: Date | null;
             }) | null;
             umkmProduct: ({
                 images: {
@@ -239,6 +253,8 @@ export declare class CartService {
                 stock: number;
                 categoryId: string;
                 isActive: boolean;
+                isPreOrderAllowed: boolean;
+                preOrderAvailableAt: Date | null;
                 umkmId: string;
                 isApproved: boolean;
                 rejectionReason: string | null;
@@ -280,6 +296,8 @@ export declare class CartService {
                 stock: number;
                 categoryId: string;
                 isActive: boolean;
+                isPreOrderAllowed: boolean;
+                preOrderAvailableAt: Date | null;
             }) | null;
             umkmProduct: ({
                 images: {
@@ -301,6 +319,8 @@ export declare class CartService {
                 stock: number;
                 categoryId: string;
                 isActive: boolean;
+                isPreOrderAllowed: boolean;
+                preOrderAvailableAt: Date | null;
                 umkmId: string;
                 isApproved: boolean;
                 rejectionReason: string | null;

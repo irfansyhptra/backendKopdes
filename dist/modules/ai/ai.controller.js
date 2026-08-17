@@ -94,6 +94,31 @@ let AIController = AIController_1 = class AIController {
             throw err;
         }
     }
+    async chatUMKM(req, message) {
+        this.logger.log(`🤖 AI CONTROLLER: Incoming Request POST /ai/umkm from user ${req.user.id}`);
+        if (!message) {
+            return { success: false, error: 'Message content is required' };
+        }
+        try {
+            const response = await this.aiService.chatUMKMAssistant(req.user.id, message);
+            return { success: true, data: response, response };
+        }
+        catch (err) {
+            this.logger.error(`🤖 AI CONTROLLER: Error in /ai/umkm: ${err.message}`, err.stack);
+            throw err;
+        }
+    }
+    async getExecutiveDashboard() {
+        this.logger.log(`🤖 AI CONTROLLER: Incoming Request GET /ai/executive-dashboard.`);
+        try {
+            const response = await this.aiService.getExecutiveDashboardSummary();
+            return { success: true, data: response };
+        }
+        catch (err) {
+            this.logger.error(`🤖 AI CONTROLLER: Error in /ai/executive-dashboard: ${err.message}`, err.stack);
+            throw err;
+        }
+    }
     async seedKnowledgeBase() {
         this.logger.log(`🤖 AI CONTROLLER: Incoming Request POST /ai/seed-knowledge.`);
         try {
@@ -118,7 +143,7 @@ __decorate([
 __decorate([
     (0, common_1.Post)('management'),
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),
-    (0, roles_decorator_1.Roles)(client_1.Role.ADMIN_KOPDES, client_1.Role.SUPER_ADMIN),
+    (0, roles_decorator_1.Roles)(client_1.Role.ADMIN_KOPDES, client_1.Role.PEGAWAI_KOPDES, client_1.Role.SUPER_ADMIN),
     __param(0, (0, common_1.Body)('message')),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String]),
@@ -127,7 +152,7 @@ __decorate([
 __decorate([
     (0, common_1.Post)('community'),
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),
-    (0, roles_decorator_1.Roles)(client_1.Role.ADMIN_KOPDES, client_1.Role.SUPER_ADMIN),
+    (0, roles_decorator_1.Roles)(client_1.Role.ADMIN_KOPDES, client_1.Role.PEGAWAI_KOPDES, client_1.Role.SUPER_ADMIN),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", []),
     __metadata("design:returntype", Promise)
@@ -135,7 +160,7 @@ __decorate([
 __decorate([
     (0, common_1.Post)('inventory'),
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),
-    (0, roles_decorator_1.Roles)(client_1.Role.ADMIN_KOPDES, client_1.Role.SUPER_ADMIN),
+    (0, roles_decorator_1.Roles)(client_1.Role.ADMIN_KOPDES, client_1.Role.PEGAWAI_KOPDES, client_1.Role.SUPER_ADMIN),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", []),
     __metadata("design:returntype", Promise)
@@ -143,11 +168,29 @@ __decorate([
 __decorate([
     (0, common_1.Post)('anomaly'),
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),
-    (0, roles_decorator_1.Roles)(client_1.Role.ADMIN_KOPDES, client_1.Role.SUPER_ADMIN),
+    (0, roles_decorator_1.Roles)(client_1.Role.ADMIN_KOPDES, client_1.Role.PEGAWAI_KOPDES, client_1.Role.SUPER_ADMIN),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", []),
     __metadata("design:returntype", Promise)
 ], AIController.prototype, "detectInventoryAnomalies", null);
+__decorate([
+    (0, common_1.Post)('umkm'),
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),
+    (0, roles_decorator_1.Roles)(client_1.Role.UMKM),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Body)('message')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", Promise)
+], AIController.prototype, "chatUMKM", null);
+__decorate([
+    (0, common_1.Get)('executive-dashboard'),
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),
+    (0, roles_decorator_1.Roles)(client_1.Role.ADMIN_KOPDES, client_1.Role.PEGAWAI_KOPDES, client_1.Role.SUPER_ADMIN),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", Promise)
+], AIController.prototype, "getExecutiveDashboard", null);
 __decorate([
     (0, common_1.Post)('seed-knowledge'),
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),

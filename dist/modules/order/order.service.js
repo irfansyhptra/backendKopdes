@@ -79,18 +79,21 @@ let OrderService = class OrderService {
                         throw new common_1.BadRequestException(`Product "${product?.name || item.productId}" is not available`);
                     }
                     if (product.stock < item.quantity) {
-                        throw new common_1.BadRequestException(`Insufficient stock for "${product.name}". Available: ${product.stock}`);
+                        if (!product.isPreOrderAllowed) {
+                            throw new common_1.BadRequestException(`Stok "${product.name}" tidak mencukupi (${product.stock} tersisa) dan produk tidak membuka pre-order`);
+                        }
                     }
+                    const newStock = Math.max(0, product.stock - item.quantity);
                     await tx.product.update({
                         where: { id: item.productId },
-                        data: { stock: product.stock - item.quantity },
+                        data: { stock: newStock },
                     });
                     await tx.inventoryTransaction.create({
                         data: {
                             productId: item.productId,
                             type: 'OUT',
                             quantity: item.quantity,
-                            reason: `Checkout Order`,
+                            reason: product.stock < item.quantity ? `Pre-Order Checkout` : `Checkout Order`,
                         },
                     });
                     const itemTotal = new client_1.Prisma.Decimal(product.price).mul(item.quantity);
@@ -349,6 +352,31 @@ let OrderService = class OrderService {
         await this.cache.set(cacheKey, orders, this.cacheTtl);
         return orders;
     }
+    async listAllForAdmin(status) {
+        const where = {};
+        if (status)
+            where.status = status;
+        return this.prisma.order.findMany({
+            where,
+            include: {
+                items: {
+                    include: {
+                        product: { include: { images: true } },
+                        umkmProduct: { include: { images: true } },
+                    },
+                },
+                payment: true,
+                delivery: {
+                    include: {
+                        courier: { select: { id: true, name: true, phone: true } },
+                    },
+                },
+                customer: { select: { id: true, name: true, email: true, phone: true } },
+                deliveryAddress: true,
+            },
+            orderBy: { createdAt: 'desc' },
+        });
+    }
     async getOrderDetail(userId, orderId, role) {
         const cacheKey = this.getDetailCacheKey(orderId);
         const cached = await this.cache.get(cacheKey);
@@ -480,6 +508,59 @@ let OrderService = class OrderService {
             orderBy: { createdAt: 'asc' },
         });
         return logs;
+    }
+    async confirmCustomerDelivery(userId, orderId) {
+        const order = await this.prisma.order.findUnique({
+            where: { id: orderId },
+            include: { delivery: true },
+        });
+        if (!order) {
+            throw new common_1.NotFoundException('Order tidak ditemukan');
+        }
+        if (order.customerId !== userId) {
+            throw new common_1.ForbiddenException('Pesanan ini bukan milik Anda');
+        }
+        const now = new Date();
+        const updatedOrder = await this.prisma.$transaction(async (tx) => {
+            if (order.delivery) {
+                await tx.delivery.update({
+                    where: { id: order.delivery.id },
+                    data: {
+                        status: 'COMPLETED',
+                        customerConfirmedAt: now,
+                    },
+                });
+            }
+            const ord = await tx.order.update({
+                where: { id: orderId },
+                data: {
+                    status: 'COMPLETED',
+                    paymentStatus: order.paymentMethod === 'COD' ? 'PAID' : order.paymentStatus,
+                },
+                include: {
+                    items: true,
+                    payment: true,
+                    delivery: true,
+                },
+            });
+            if (order.paymentMethod === 'COD') {
+                await tx.payment.updateMany({
+                    where: { orderId },
+                    data: { status: 'PAID', paidAt: now },
+                });
+            }
+            await tx.auditLog.create({
+                data: {
+                    userId,
+                    action: 'DUAL_VALIDATION_CUSTOMER_CONFIRMED',
+                    details: `Customer mengonfirmasi penerimaan barang untuk Order #${orderId}. Transaksi pengiriman SELESAI.`,
+                },
+            });
+            return ord;
+        });
+        await this.cache.delete(this.getDetailCacheKey(orderId));
+        await this.cache.delete(this.getHistoryCacheKey(userId));
+        return updatedOrder;
     }
 };
 exports.OrderService = OrderService;

@@ -1,9 +1,14 @@
-import { Injectable, UnauthorizedException, ConflictException, NotFoundException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { ConfigService } from '@nestjs/config';
+import { Role } from '@prisma/client';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { JwtHelper, PasswordHelper } from './helpers/crypto.helper';
+
+// Pendaftaran mandiri hanya untuk peran publik. Akun staf Kopdes
+// (ADMIN_KOPDES, PEGAWAI_KOPDES) & SUPER_ADMIN dibuat oleh Super Admin.
+const SELF_REGISTER_ROLES: Role[] = [Role.CUSTOMER, Role.UMKM, Role.COURIER];
 
 @Injectable()
 export class AuthService {
@@ -41,6 +46,14 @@ export class AuthService {
   }
 
   async register(dto: RegisterDto) {
+    // Cegah eskalasi hak akses lewat pendaftaran mandiri.
+    const requestedRole = dto.role ?? Role.CUSTOMER;
+    if (!SELF_REGISTER_ROLES.includes(requestedRole)) {
+      throw new ForbiddenException(
+        'Peran ini tidak dapat mendaftar sendiri. Akun dibuat oleh Super Admin.',
+      );
+    }
+
     const existing = await this.prisma.user.findUnique({
       where: { email: dto.email },
     });
@@ -55,7 +68,7 @@ export class AuthService {
         password: hashedPassword,
         name: dto.name,
         phone: dto.phone,
-        role: dto.role ?? 'CUSTOMER',
+        role: requestedRole,
       },
     });
 

@@ -15,7 +15,9 @@ export declare class AIService {
     chatManagement(message: string): Promise<string>;
     analyzeCommunityDemands(): Promise<string>;
     getInventoryReplenishmentOptions(): Promise<string>;
-    detectInventoryAnomalies(): Promise<string>;
+    detectInventoryAnomalies(): Promise<any>;
+    chatUMKMAssistant(userId: string, message: string): Promise<string>;
+    getExecutiveDashboardSummary(): Promise<any>;
     seedKnowledgeBase(): Promise<void>;
     private generateUUID;
 }

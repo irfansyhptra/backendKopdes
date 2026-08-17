@@ -63,4 +63,17 @@ export class OrderController {
     const timeline = await this.orderService.getTimeline(orderId);
     return { success: true, timeline };
   }
+
+  // Dual Validation Step 2: Customer clicks [Barang Sudah Diterima]
+  @Post(':id/confirm-receipt')
+  async confirmReceipt(@Req() req: any, @Param('id') orderId: string) {
+    const userId = req.user.id;
+    const order = await this.orderService.confirmCustomerDelivery(userId, orderId);
+    return {
+      success: true,
+      message: 'Konfirmasi penerimaan barang berhasil. Transaksi pengiriman selesai.',
+      order,
+    };
+  }
 }
+

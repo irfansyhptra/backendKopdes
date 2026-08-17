@@ -9,6 +9,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.OrderModule = void 0;
 const common_1 = require("@nestjs/common");
 const order_controller_1 = require("./order.controller");
+const admin_order_controller_1 = require("./admin-order.controller");
 const order_service_1 = require("./order.service");
 const database_module_1 = require("../../database/database.module");
 const cache_module_1 = require("../../cache/cache.module");
@@ -18,7 +19,7 @@ exports.OrderModule = OrderModule;
 exports.OrderModule = OrderModule = __decorate([
     (0, common_1.Module)({
         imports: [database_module_1.DatabaseModule, cache_module_1.CacheModule],
-        controllers: [order_controller_1.OrderController],
+        controllers: [order_controller_1.OrderController, admin_order_controller_1.AdminOrderController],
         providers: [order_service_1.OrderService],
         exports: [order_service_1.OrderService],
     })

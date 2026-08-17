@@ -30,6 +30,8 @@ export declare class OrderController {
                     stock: number;
                     categoryId: string;
                     isActive: boolean;
+                    isPreOrderAllowed: boolean;
+                    preOrderAvailableAt: Date | null;
                 }) | null;
                 umkmProduct: ({
                     images: {
@@ -51,6 +53,8 @@ export declare class OrderController {
                     stock: number;
                     categoryId: string;
                     isActive: boolean;
+                    isPreOrderAllowed: boolean;
+                    preOrderAvailableAt: Date | null;
                     umkmId: string;
                     isApproved: boolean;
                     rejectionReason: string | null;
@@ -102,6 +106,8 @@ export declare class OrderController {
                     stock: number;
                     categoryId: string;
                     isActive: boolean;
+                    isPreOrderAllowed: boolean;
+                    preOrderAvailableAt: Date | null;
                 }) | null;
                 umkmProduct: ({
                     images: {
@@ -123,6 +129,8 @@ export declare class OrderController {
                     stock: number;
                     categoryId: string;
                     isActive: boolean;
+                    isPreOrderAllowed: boolean;
+                    preOrderAvailableAt: Date | null;
                     umkmId: string;
                     isApproved: boolean;
                     rejectionReason: string | null;
@@ -198,5 +206,55 @@ export declare class OrderController {
             details: string | null;
             ipAddress: string | null;
         }[];
+    }>;
+    confirmReceipt(req: any, orderId: string): Promise<{
+        success: boolean;
+        message: string;
+        order: {
+            payment: {
+                id: string;
+                createdAt: Date;
+                updatedAt: Date;
+                status: import("@prisma/client").$Enums.PaymentStatus;
+                orderId: string;
+                method: import("@prisma/client").$Enums.PaymentMethod;
+                amount: import("@prisma/client/runtime/library").Decimal;
+                transactionId: string | null;
+                qrisCode: string | null;
+                paidAt: Date | null;
+            } | null;
+            delivery: {
+                id: string;
+                createdAt: Date;
+                updatedAt: Date;
+                status: import("@prisma/client").$Enums.DeliveryStatus;
+                orderId: string;
+                courierId: string | null;
+                courierMarkedDeliveredAt: Date | null;
+                customerConfirmedAt: Date | null;
+                estimatedDeliveryTime: Date | null;
+                actualDeliveryTime: Date | null;
+            } | null;
+            items: {
+                id: string;
+                createdAt: Date;
+                updatedAt: Date;
+                price: import("@prisma/client/runtime/library").Decimal;
+                productId: string | null;
+                umkmProductId: string | null;
+                quantity: number;
+                orderId: string;
+            }[];
+        } & {
+            id: string;
+            createdAt: Date;
+            updatedAt: Date;
+            deliveryAddressId: string;
+            paymentMethod: import("@prisma/client").$Enums.PaymentMethod;
+            totalAmount: import("@prisma/client/runtime/library").Decimal;
+            status: import("@prisma/client").$Enums.OrderStatus;
+            paymentStatus: import("@prisma/client").$Enums.PaymentStatus;
+            customerId: string;
+        };
     }>;
 }

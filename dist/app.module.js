@@ -28,6 +28,8 @@ const admin_module_1 = require("./modules/admin/admin.module");
 const community_module_1 = require("./modules/community/community.module");
 const health_module_1 = require("./modules/health/health.module");
 const seller_module_1 = require("./modules/seller/seller.module");
+const chat_module_1 = require("./modules/chat/chat.module");
+const superadmin_module_1 = require("./modules/superadmin/superadmin.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -54,6 +56,8 @@ exports.AppModule = AppModule = __decorate([
             admin_module_1.AdminModule,
             community_module_1.CommunityModule,
             health_module_1.HealthModule,
+            chat_module_1.ChatModule,
+            superadmin_module_1.SuperAdminModule,
         ],
         controllers: [app_controller_1.AppController],
         providers: [app_service_1.AppService],

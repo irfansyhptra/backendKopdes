@@ -37,8 +37,23 @@ export declare class AIController {
     }>;
     detectInventoryAnomalies(): Promise<{
         success: boolean;
+        data: any;
+        response: any;
+    }>;
+    chatUMKM(req: any, message: string): Promise<{
+        success: boolean;
+        error: string;
+        data?: undefined;
+        response?: undefined;
+    } | {
+        success: boolean;
         data: string;
         response: string;
+        error?: undefined;
+    }>;
+    getExecutiveDashboard(): Promise<{
+        success: boolean;
+        data: any;
     }>;
     seedKnowledgeBase(): Promise<{
         success: boolean;
