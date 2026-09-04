@@ -13,6 +13,7 @@ exports.CreateOrderDto = exports.CreateOrderItemDto = void 0;
 const class_validator_1 = require("class-validator");
 const class_transformer_1 = require("class-transformer");
 const client_1 = require("@prisma/client");
+const delivery_address_selection_dto_1 = require("./delivery-address-selection.dto");
 class CreateOrderItemDto {
     productId;
     umkmProductId;
@@ -35,9 +36,8 @@ __decorate([
     (0, class_validator_1.Min)(1),
     __metadata("design:type", Number)
 ], CreateOrderItemDto.prototype, "quantity", void 0);
-class CreateOrderDto {
+class CreateOrderDto extends delivery_address_selection_dto_1.DeliveryAddressSelectionDto {
     items;
-    deliveryAddressId;
     paymentMethod;
 }
 exports.CreateOrderDto = CreateOrderDto;
@@ -47,11 +47,6 @@ __decorate([
     (0, class_transformer_1.Type)(() => CreateOrderItemDto),
     __metadata("design:type", Array)
 ], CreateOrderDto.prototype, "items", void 0);
-__decorate([
-    (0, class_validator_1.IsString)(),
-    (0, class_validator_1.IsNotEmpty)(),
-    __metadata("design:type", String)
-], CreateOrderDto.prototype, "deliveryAddressId", void 0);
 __decorate([
     (0, class_validator_1.IsEnum)(client_1.PaymentMethod),
     (0, class_validator_1.IsNotEmpty)(),

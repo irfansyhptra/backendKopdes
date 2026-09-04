@@ -46,7 +46,8 @@ export class OrderController {
     @Body() dto: UpdateOrderStatusDto,
   ) {
     const userId = req.user.id;
-    const order = await this.orderService.updateStatus(userId, orderId, dto.status);
+    const role = req.user.role;
+    const order = await this.orderService.updateStatus(userId, orderId, dto.status, role);
     return { success: true, message: 'Order status updated successfully', order };
   }
 
@@ -60,7 +61,7 @@ export class OrderController {
 
   @Get(':id/timeline')
   async getTimeline(@Req() req: any, @Param('id') orderId: string) {
-    const timeline = await this.orderService.getTimeline(orderId);
+    const timeline = await this.orderService.getTimeline(req.user.id, orderId, req.user.role);
     return { success: true, timeline };
   }
 

@@ -18,8 +18,7 @@ let JwtAuthGuard = class JwtAuthGuard {
     jwtSecret;
     constructor(configService) {
         this.configService = configService;
-        this.jwtSecret =
-            this.configService.get('JWT_SECRET') || 'default_jwt_secret';
+        this.jwtSecret = this.configService.get('JWT_SECRET');
     }
     async canActivate(context) {
         const request = context.switchToHttp().getRequest();
@@ -28,23 +27,6 @@ let JwtAuthGuard = class JwtAuthGuard {
             throw new common_1.UnauthorizedException('Authorization header is missing or malformed');
         }
         const token = authHeader.split(' ')[1];
-        if (token.startsWith('mock_jwt_access_token_for_')) {
-            const role = token.replace('mock_jwt_access_token_for_', '');
-            request.user = {
-                id: `mock-user-id-${role.toLowerCase()}`,
-                email: `${role.toLowerCase()}@kopdes.co`,
-                role: role,
-            };
-            return true;
-        }
-        if (token === 'mock_refreshed_access_token') {
-            request.user = {
-                id: 'mock-user-id-refreshed',
-                email: 'refreshed@kopdes.co',
-                role: 'CUSTOMER',
-            };
-            return true;
-        }
         try {
             const payload = crypto_helper_1.JwtHelper.verify(token, this.jwtSecret);
             request.user = {

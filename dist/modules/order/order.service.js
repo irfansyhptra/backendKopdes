@@ -8,21 +8,31 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var OrderService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.OrderService = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../../database/prisma.service");
 const cache_service_1 = require("../../cache/cache.service");
+const address_service_1 = require("../address/address.service");
 const client_1 = require("@prisma/client");
 let OrderService = class OrderService {
+    static { OrderService_1 = this; }
     prisma;
     cache;
+    addressService;
     historyCachePrefix = 'orders:history:';
     detailCachePrefix = 'order:detail:';
     cacheTtl = 3600;
-    constructor(prisma, cache) {
+    static STAFF_ROLES = [
+        'SUPER_ADMIN',
+        'ADMIN_KOPDES',
+        'PEGAWAI_KOPDES',
+    ];
+    constructor(prisma, cache, addressService) {
         this.prisma = prisma;
         this.cache = cache;
+        this.addressService = addressService;
     }
     getHistoryCacheKey(userId) {
         return `${this.historyCachePrefix}${userId}`;
@@ -45,28 +55,7 @@ let OrderService = class OrderService {
         if (!cart || cart.items.length === 0) {
             throw new common_1.BadRequestException('Shopping cart is empty');
         }
-        let address = await this.prisma.address.findUnique({
-            where: { id: dto.deliveryAddressId },
-        });
-        if (!address && dto.deliveryAddressId === 'default-mock-address-id') {
-            address = await this.prisma.address.create({
-                data: {
-                    id: 'default-mock-address-id',
-                    userId,
-                    title: 'Rumah Utama',
-                    recipientName: 'Budi Santoso',
-                    phone: '081234567890',
-                    street: 'Jl. Merdeka No. 10',
-                    city: 'Sleman',
-                    state: 'DI Yogyakarta',
-                    postalCode: '55281',
-                    isDefault: true,
-                },
-            });
-        }
-        if (!address) {
-            throw new common_1.NotFoundException('Delivery address not found');
-        }
+        const address = await this.addressService.resolveForOrder(userId, dto);
         const order = await this.prisma.$transaction(async (tx) => {
             let totalAmount = new client_1.Prisma.Decimal(0);
             const orderItemsData = [];
@@ -93,6 +82,7 @@ let OrderService = class OrderService {
                             productId: item.productId,
                             type: 'OUT',
                             quantity: item.quantity,
+                            stockAfter: newStock,
                             reason: product.stock < item.quantity ? `Pre-Order Checkout` : `Checkout Order`,
                         },
                     });
@@ -114,9 +104,19 @@ let OrderService = class OrderService {
                     if (umkmProduct.stock < item.quantity) {
                         throw new common_1.BadRequestException(`Insufficient stock for "${umkmProduct.name}". Available: ${umkmProduct.stock}`);
                     }
+                    const umkmNewStock = umkmProduct.stock - item.quantity;
                     await tx.uMKMProduct.update({
                         where: { id: item.umkmProductId },
-                        data: { stock: umkmProduct.stock - item.quantity },
+                        data: { stock: umkmNewStock },
+                    });
+                    await tx.inventoryTransaction.create({
+                        data: {
+                            umkmProductId: item.umkmProductId,
+                            type: 'OUT',
+                            quantity: item.quantity,
+                            stockAfter: umkmNewStock,
+                            reason: 'Checkout Order',
+                        },
                     });
                     const itemTotal = new client_1.Prisma.Decimal(umkmProduct.price).mul(item.quantity);
                     totalAmount = totalAmount.add(itemTotal);
@@ -134,7 +134,7 @@ let OrderService = class OrderService {
                     status: 'PENDING',
                     paymentMethod: dto.paymentMethod,
                     paymentStatus: 'PENDING',
-                    deliveryAddressId: dto.deliveryAddressId,
+                    deliveryAddressId: address.id,
                     items: {
                         create: orderItemsData,
                     },
@@ -191,28 +191,7 @@ let OrderService = class OrderService {
         if (dto.items.length === 0) {
             throw new common_1.BadRequestException('Order items list is empty');
         }
-        let address = await this.prisma.address.findUnique({
-            where: { id: dto.deliveryAddressId },
-        });
-        if (!address && dto.deliveryAddressId === 'default-mock-address-id') {
-            address = await this.prisma.address.create({
-                data: {
-                    id: 'default-mock-address-id',
-                    userId,
-                    title: 'Rumah Utama',
-                    recipientName: 'Budi Santoso',
-                    phone: '081234567890',
-                    street: 'Jl. Merdeka No. 10',
-                    city: 'Sleman',
-                    state: 'DI Yogyakarta',
-                    postalCode: '55281',
-                    isDefault: true,
-                },
-            });
-        }
-        if (!address) {
-            throw new common_1.NotFoundException('Delivery address not found');
-        }
+        const address = await this.addressService.resolveForOrder(userId, dto);
         const order = await this.prisma.$transaction(async (tx) => {
             let totalAmount = new client_1.Prisma.Decimal(0);
             const orderItemsData = [];
@@ -227,15 +206,17 @@ let OrderService = class OrderService {
                     if (product.stock < item.quantity) {
                         throw new common_1.BadRequestException(`Insufficient stock for "${product.name}". Available: ${product.stock}`);
                     }
+                    const productNewStock = product.stock - item.quantity;
                     await tx.product.update({
                         where: { id: item.productId },
-                        data: { stock: product.stock - item.quantity },
+                        data: { stock: productNewStock },
                     });
                     await tx.inventoryTransaction.create({
                         data: {
                             productId: item.productId,
                             type: 'OUT',
                             quantity: item.quantity,
+                            stockAfter: productNewStock,
                             reason: `Direct Order`,
                         },
                     });
@@ -257,9 +238,19 @@ let OrderService = class OrderService {
                     if (umkmProduct.stock < item.quantity) {
                         throw new common_1.BadRequestException(`Insufficient stock for "${umkmProduct.name}". Available: ${umkmProduct.stock}`);
                     }
+                    const umkmNewStock = umkmProduct.stock - item.quantity;
                     await tx.uMKMProduct.update({
                         where: { id: item.umkmProductId },
-                        data: { stock: umkmProduct.stock - item.quantity },
+                        data: { stock: umkmNewStock },
+                    });
+                    await tx.inventoryTransaction.create({
+                        data: {
+                            umkmProductId: item.umkmProductId,
+                            type: 'OUT',
+                            quantity: item.quantity,
+                            stockAfter: umkmNewStock,
+                            reason: 'Direct Order',
+                        },
                     });
                     const itemTotal = new client_1.Prisma.Decimal(umkmProduct.price).mul(item.quantity);
                     totalAmount = totalAmount.add(itemTotal);
@@ -280,7 +271,7 @@ let OrderService = class OrderService {
                     status: 'PENDING',
                     paymentMethod: dto.paymentMethod,
                     paymentStatus: 'PENDING',
-                    deliveryAddressId: dto.deliveryAddressId,
+                    deliveryAddressId: address.id,
                     items: {
                         create: orderItemsData,
                     },
@@ -410,18 +401,26 @@ let OrderService = class OrderService {
             }
             await this.cache.set(cacheKey, order, this.cacheTtl);
         }
-        if (role !== 'SUPER_ADMIN' && role !== 'ADMIN_KOPDES' && role !== 'COURIER' && order.customerId !== userId) {
+        if (!OrderService_1.STAFF_ROLES.includes(role) && role !== 'COURIER' && order.customerId !== userId) {
             throw new common_1.ForbiddenException('You do not have permission to view this order');
         }
         return order;
     }
-    async updateStatus(userId, orderId, status) {
+    async updateStatus(userId, orderId, status, role) {
         const order = await this.prisma.order.findUnique({
             where: { id: orderId },
             include: { items: true },
         });
         if (!order) {
             throw new common_1.NotFoundException('Order not found');
+        }
+        if (!OrderService_1.STAFF_ROLES.includes(role)) {
+            if (order.customerId !== userId) {
+                throw new common_1.ForbiddenException('You do not have permission to modify this order');
+            }
+            if (status !== 'CANCELLED' || order.status !== 'PENDING') {
+                throw new common_1.ForbiddenException('You may only cancel your own order while it is still pending');
+            }
         }
         const oldStatus = order.status;
         if (oldStatus === status) {
@@ -464,7 +463,7 @@ let OrderService = class OrderService {
             if (status === 'CANCELLED' && oldStatus !== 'CANCELLED') {
                 for (const item of order.items) {
                     if (item.productId) {
-                        await tx.product.update({
+                        const restoredProduct = await tx.product.update({
                             where: { id: item.productId },
                             data: { stock: { increment: item.quantity } },
                         });
@@ -473,14 +472,24 @@ let OrderService = class OrderService {
                                 productId: item.productId,
                                 type: 'IN',
                                 quantity: item.quantity,
+                                stockAfter: restoredProduct.stock,
                                 reason: `Order #${orderId} Cancelled (Stock Restored)`,
                             },
                         });
                     }
                     else if (item.umkmProductId) {
-                        await tx.uMKMProduct.update({
+                        const restored = await tx.uMKMProduct.update({
                             where: { id: item.umkmProductId },
                             data: { stock: { increment: item.quantity } },
+                        });
+                        await tx.inventoryTransaction.create({
+                            data: {
+                                umkmProductId: item.umkmProductId,
+                                type: 'IN',
+                                quantity: item.quantity,
+                                stockAfter: restored.stock,
+                                reason: `Order #${orderId} Cancelled (Stock Restored)`,
+                            },
                         });
                     }
                 }
@@ -498,7 +507,8 @@ let OrderService = class OrderService {
         });
         return updatedOrder;
     }
-    async getTimeline(orderId) {
+    async getTimeline(userId, orderId, role) {
+        await this.getOrderDetail(userId, orderId, role);
         const logs = await this.prisma.auditLog.findMany({
             where: {
                 details: {
@@ -564,9 +574,10 @@ let OrderService = class OrderService {
     }
 };
 exports.OrderService = OrderService;
-exports.OrderService = OrderService = __decorate([
+exports.OrderService = OrderService = OrderService_1 = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
-        cache_service_1.CacheService])
+        cache_service_1.CacheService,
+        address_service_1.AddressService])
 ], OrderService);
 //# sourceMappingURL=order.service.js.map

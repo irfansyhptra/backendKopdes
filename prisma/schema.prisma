@@ -63,29 +63,30 @@ enum InventoryTransactionType {
 }
 
 model User {
-  id                  String                       @id @default(uuid())
-  email               String                       @unique
-  password            String
-  name                String
-  phone               String?
-  role                Role                         @default(CUSTOMER)
-  createdAt           DateTime                     @default(now())
-  updatedAt           DateTime                     @updatedAt
-  
-  addresses           Address[]
-  cart                Cart?
-  umkm                UMKM?
-  orders              Order[]                      @relation("CustomerOrders")
-  deliveries          Delivery[]                   @relation("CourierDeliveries")
-  reviews             Review[]
-  suggestions         CommunitySuggestion[]
-  notifications       Notification[]
-  auditLogs           AuditLog[]
-  refreshTokens       RefreshToken[]
-  suggestionSupports  CommunitySuggestionSupport[]
-  conversationsAsA    Conversation[]               @relation("ConvUser1")
-  conversationsAsB    Conversation[]               @relation("ConvUser2")
-  chatMessages        ChatMessage[]
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  phone     String?
+  role      Role     @default(CUSTOMER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  addresses             Address[]
+  cart                  Cart?
+  umkm                  UMKM?
+  orders                Order[]                      @relation("CustomerOrders")
+  deliveries            Delivery[]                   @relation("CourierDeliveries")
+  reviews               Review[]
+  suggestions           CommunitySuggestion[]
+  notifications         Notification[]
+  auditLogs             AuditLog[]
+  inventoryTransactions InventoryTransaction[]
+  refreshTokens         RefreshToken[]
+  suggestionSupports    CommunitySuggestionSupport[]
+  conversationsAsA      Conversation[]               @relation("ConvUser1")
+  conversationsAsB      Conversation[]               @relation("ConvUser2")
+  chatMessages          ChatMessage[]
 }
 
 model RefreshToken {
@@ -112,8 +113,8 @@ model Address {
   isDefault     Boolean  @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
-  
-  orders        Order[]
+
+  orders Order[]
 }
 
 model Category {
@@ -122,25 +123,25 @@ model Category {
   description String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  
+
   products     Product[]
   umkmProducts UMKMProduct[]
 }
 
 model Product {
-  id          String   @id @default(uuid())
-  name        String
-  description String
-  price       Decimal  @db.Decimal(12, 2)
-  stock       Int
-  categoryId  String
-  category    Category @relation(fields: [categoryId], references: [id])
+  id                  String    @id @default(uuid())
+  name                String
+  description         String
+  price               Decimal   @db.Decimal(12, 2)
+  stock               Int
+  categoryId          String
+  category            Category  @relation(fields: [categoryId], references: [id])
   isActive            Boolean   @default(true)
   isPreOrderAllowed   Boolean   @default(false)
   preOrderAvailableAt DateTime?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
-  
+
   images                ProductImage[]
   reviews               Review[]
   cartItems             CartItem[]
@@ -161,13 +162,13 @@ model ProductImage {
 }
 
 model Cart {
-  id        String     @id @default(uuid())
-  userId    String     @unique
-  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
-  
-  items     CartItem[]
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items CartItem[]
 }
 
 model CartItem {
@@ -198,11 +199,11 @@ model Order {
   deliveryAddress   Address       @relation(fields: [deliveryAddressId], references: [id])
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
-  
-  items             OrderItem[]
-  payment           Payment?
-  invoice           Invoice?
-  delivery          Delivery?
+
+  items    OrderItem[]
+  payment  Payment?
+  invoice  Invoice?
+  delivery Delivery?
 }
 
 model OrderItem {
@@ -257,8 +258,8 @@ model Delivery {
   actualDeliveryTime       DateTime?
   createdAt                DateTime       @default(now())
   updatedAt                DateTime       @updatedAt
-  
-  locations                DeliveryLocation[]
+
+  locations DeliveryLocation[]
 }
 
 model DeliveryLocation {
@@ -285,32 +286,33 @@ model UMKM {
   verifiedAt      DateTime?
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
-  
-  products        UMKMProduct[]
+
+  products UMKMProduct[]
 }
 
 model UMKMProduct {
-  id              String    @id @default(uuid())
-  umkmId          String
-  umkm            UMKM      @relation(fields: [umkmId], references: [id], onDelete: Cascade)
-  name            String
-  description     String
-  price           Decimal   @db.Decimal(12, 2)
-  stock           Int
-  categoryId      String
-  category        Category  @relation(fields: [categoryId], references: [id])
-  isApproved      Boolean   @default(false)
-  rejectionReason String?
+  id                  String    @id @default(uuid())
+  umkmId              String
+  umkm                UMKM      @relation(fields: [umkmId], references: [id], onDelete: Cascade)
+  name                String
+  description         String
+  price               Decimal   @db.Decimal(12, 2)
+  stock               Int
+  categoryId          String
+  category            Category  @relation(fields: [categoryId], references: [id])
+  isApproved          Boolean   @default(false)
+  rejectionReason     String?
   isActive            Boolean   @default(true)
   isPreOrderAllowed   Boolean   @default(false)
   preOrderAvailableAt DateTime?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
-  
-  images          ProductImage[]
-  cartItems       CartItem[]
-  orderItems      OrderItem[]
-  reviews         Review[]
+
+  images                ProductImage[]
+  cartItems             CartItem[]
+  orderItems            OrderItem[]
+  reviews               Review[]
+  inventoryTransactions InventoryTransaction[]
 }
 
 model Review {
@@ -336,8 +338,8 @@ model CommunitySuggestion {
   description String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  
-  supporters  CommunitySuggestionSupport[]
+
+  supporters CommunitySuggestionSupport[]
 }
 
 model CommunitySuggestionSupport {
@@ -363,15 +365,27 @@ model Notification {
   updatedAt DateTime @updatedAt
 }
 
+// Mencatat setiap pergerakan stok, baik barang Kopdes (productId) maupun
+// barang mitra UMKM (umkmProductId). Tepat satu dari keduanya terisi.
 model InventoryTransaction {
-  id        String                   @id @default(uuid())
-  productId String
-  product   Product                  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  type      InventoryTransactionType
-  quantity  Int
-  reason    String?
-  createdAt DateTime                 @default(now())
-  updatedAt DateTime                 @updatedAt
+  id            String                   @id @default(uuid())
+  productId     String?
+  product       Product?                 @relation(fields: [productId], references: [id], onDelete: Cascade)
+  umkmProductId String?
+  umkmProduct   UMKMProduct?             @relation(fields: [umkmProductId], references: [id], onDelete: Cascade)
+  type          InventoryTransactionType
+  quantity      Int
+  // Stok sesudah transaksi ini — supaya riwayat bisa dibaca tanpa menghitung ulang.
+  stockAfter    Int?
+  reason        String?
+  // Siapa yang mencatat. Null untuk pergerakan otomatis dari checkout.
+  userId        String?
+  user          User?                    @relation(fields: [userId], references: [id])
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
+
+  @@index([productId, createdAt])
+  @@index([umkmProductId, createdAt])
 }
 
 model AuditLog {
@@ -388,16 +402,16 @@ model AuditLog {
 // Percakapan 1-1 (mis. Admin Kopdes ↔ UMKM / Customer).
 // user1Id selalu diurutkan lebih kecil dari user2Id agar unik & idempoten.
 model Conversation {
-  id            String        @id @default(uuid())
+  id            String   @id @default(uuid())
   user1Id       String
-  user1         User          @relation("ConvUser1", fields: [user1Id], references: [id], onDelete: Cascade)
+  user1         User     @relation("ConvUser1", fields: [user1Id], references: [id], onDelete: Cascade)
   user2Id       String
-  user2         User          @relation("ConvUser2", fields: [user2Id], references: [id], onDelete: Cascade)
-  lastMessageAt DateTime      @default(now())
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  user2         User     @relation("ConvUser2", fields: [user2Id], references: [id], onDelete: Cascade)
+  lastMessageAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  messages      ChatMessage[]
+  messages ChatMessage[]
 
   @@unique([user1Id, user2Id])
 }

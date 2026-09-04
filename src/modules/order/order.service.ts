@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { CacheService } from '../../cache/cache.service';
+import { AddressService } from '../address/address.service';
 import { CheckoutDto } from './dto/checkout.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { OrderStatus, PaymentMethod, PaymentStatus, Prisma } from '@prisma/client';
@@ -11,9 +12,17 @@ export class OrderService {
   private readonly detailCachePrefix = 'order:detail:';
   private readonly cacheTtl = 3600; // 1 hour
 
+  // Peran yang boleh menggerakkan status pesanan milik siapa pun.
+  private static readonly STAFF_ROLES: string[] = [
+    'SUPER_ADMIN',
+    'ADMIN_KOPDES',
+    'PEGAWAI_KOPDES',
+  ];
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly cache: CacheService,
+    private readonly addressService: AddressService,
   ) {}
 
   private getHistoryCacheKey(userId: string): string {
@@ -42,29 +51,9 @@ export class OrderService {
       throw new BadRequestException('Shopping cart is empty');
     }
 
-    // Validate delivery address exists
-    let address = await this.prisma.address.findUnique({
-      where: { id: dto.deliveryAddressId },
-    });
-    if (!address && dto.deliveryAddressId === 'default-mock-address-id') {
-      address = await this.prisma.address.create({
-        data: {
-          id: 'default-mock-address-id',
-          userId,
-          title: 'Rumah Utama',
-          recipientName: 'Budi Santoso',
-          phone: '081234567890',
-          street: 'Jl. Merdeka No. 10',
-          city: 'Sleman',
-          state: 'DI Yogyakarta',
-          postalCode: '55281',
-          isDefault: true,
-        },
-      });
-    }
-    if (!address) {
-      throw new NotFoundException('Delivery address not found');
-    }
+    // Alamat utama profil, alamat tersimpan pilihan pemesan, atau alamat baru
+    // yang diketik saat checkout — semuanya diputuskan di satu tempat.
+    const address = await this.addressService.resolveForOrder(userId, dto);
 
     // 2. Perform Stock Reservation and Order Creation inside transaction
     const order = await this.prisma.$transaction(async (tx) => {
@@ -100,6 +89,7 @@ export class OrderService {
               productId: item.productId,
               type: 'OUT',
               quantity: item.quantity,
+              stockAfter: newStock,
               reason: product.stock < item.quantity ? `Pre-Order Checkout` : `Checkout Order`,
             },
           });
@@ -126,9 +116,20 @@ export class OrderService {
           }
 
           // Decrement stock
+          const umkmNewStock = umkmProduct.stock - item.quantity;
           await tx.uMKMProduct.update({
             where: { id: item.umkmProductId },
-            data: { stock: umkmProduct.stock - item.quantity },
+            data: { stock: umkmNewStock },
+          });
+
+          await tx.inventoryTransaction.create({
+            data: {
+              umkmProductId: item.umkmProductId,
+              type: 'OUT',
+              quantity: item.quantity,
+              stockAfter: umkmNewStock,
+              reason: 'Checkout Order',
+            },
           });
 
           const itemTotal = new Prisma.Decimal(umkmProduct.price).mul(item.quantity);
@@ -150,7 +151,7 @@ export class OrderService {
           status: 'PENDING',
           paymentMethod: dto.paymentMethod,
           paymentStatus: 'PENDING',
-          deliveryAddressId: dto.deliveryAddressId,
+          deliveryAddressId: address.id,
           items: {
             create: orderItemsData,
           },
@@ -223,29 +224,9 @@ export class OrderService {
       throw new BadRequestException('Order items list is empty');
     }
 
-    // Validate delivery address exists
-    let address = await this.prisma.address.findUnique({
-      where: { id: dto.deliveryAddressId },
-    });
-    if (!address && dto.deliveryAddressId === 'default-mock-address-id') {
-      address = await this.prisma.address.create({
-        data: {
-          id: 'default-mock-address-id',
-          userId,
-          title: 'Rumah Utama',
-          recipientName: 'Budi Santoso',
-          phone: '081234567890',
-          street: 'Jl. Merdeka No. 10',
-          city: 'Sleman',
-          state: 'DI Yogyakarta',
-          postalCode: '55281',
-          isDefault: true,
-        },
-      });
-    }
-    if (!address) {
-      throw new NotFoundException('Delivery address not found');
-    }
+    // Alamat utama profil, alamat tersimpan pilihan pemesan, atau alamat baru
+    // yang diketik saat checkout — semuanya diputuskan di satu tempat.
+    const address = await this.addressService.resolveForOrder(userId, dto);
 
     const order = await this.prisma.$transaction(async (tx) => {
       let totalAmount = new Prisma.Decimal(0);
@@ -265,9 +246,10 @@ export class OrderService {
             throw new BadRequestException(`Insufficient stock for "${product.name}". Available: ${product.stock}`);
           }
 
+          const productNewStock = product.stock - item.quantity;
           await tx.product.update({
             where: { id: item.productId },
-            data: { stock: product.stock - item.quantity },
+            data: { stock: productNewStock },
           });
 
           await tx.inventoryTransaction.create({
@@ -275,6 +257,7 @@ export class OrderService {
               productId: item.productId,
               type: 'OUT',
               quantity: item.quantity,
+              stockAfter: productNewStock,
               reason: `Direct Order`,
             },
           });
@@ -300,9 +283,20 @@ export class OrderService {
             throw new BadRequestException(`Insufficient stock for "${umkmProduct.name}". Available: ${umkmProduct.stock}`);
           }
 
+          const umkmNewStock = umkmProduct.stock - item.quantity;
           await tx.uMKMProduct.update({
             where: { id: item.umkmProductId },
-            data: { stock: umkmProduct.stock - item.quantity },
+            data: { stock: umkmNewStock },
+          });
+
+          await tx.inventoryTransaction.create({
+            data: {
+              umkmProductId: item.umkmProductId,
+              type: 'OUT',
+              quantity: item.quantity,
+              stockAfter: umkmNewStock,
+              reason: 'Direct Order',
+            },
           });
 
           const itemTotal = new Prisma.Decimal(umkmProduct.price).mul(item.quantity);
@@ -325,7 +319,7 @@ export class OrderService {
           status: 'PENDING',
           paymentMethod: dto.paymentMethod,
           paymentStatus: 'PENDING',
-          deliveryAddressId: dto.deliveryAddressId,
+          deliveryAddressId: address.id,
           items: {
             create: orderItemsData,
           },
@@ -475,14 +469,19 @@ export class OrderService {
     }
 
     // Authorization check
-    if (role !== 'SUPER_ADMIN' && role !== 'ADMIN_KOPDES' && role !== 'COURIER' && order.customerId !== userId) {
+    if (!OrderService.STAFF_ROLES.includes(role) && role !== 'COURIER' && order.customerId !== userId) {
       throw new ForbiddenException('You do not have permission to view this order');
     }
 
     return order;
   }
 
-  async updateStatus(userId: string, orderId: string, status: OrderStatus) {
+  async updateStatus(
+    userId: string,
+    orderId: string,
+    status: OrderStatus,
+    role: string,
+  ) {
     // 1. Get current order details
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
@@ -491,6 +490,21 @@ export class OrderService {
 
     if (!order) {
       throw new NotFoundException('Order not found');
+    }
+
+    // 2. Authorization: hanya staf Kopdes yang boleh menggerakkan status pesanan.
+    // Non-staf paling jauh hanya boleh membatalkan pesanannya sendiri yang belum diproses.
+    if (!OrderService.STAFF_ROLES.includes(role)) {
+      if (order.customerId !== userId) {
+        throw new ForbiddenException(
+          'You do not have permission to modify this order',
+        );
+      }
+      if (status !== 'CANCELLED' || order.status !== 'PENDING') {
+        throw new ForbiddenException(
+          'You may only cancel your own order while it is still pending',
+        );
+      }
     }
 
     const oldStatus = order.status;
@@ -544,7 +558,7 @@ export class OrderService {
       if (status === 'CANCELLED' && oldStatus !== 'CANCELLED') {
         for (const item of order.items) {
           if (item.productId) {
-            await tx.product.update({
+            const restoredProduct = await tx.product.update({
               where: { id: item.productId },
               data: { stock: { increment: item.quantity } },
             });
@@ -553,13 +567,23 @@ export class OrderService {
                 productId: item.productId,
                 type: 'IN',
                 quantity: item.quantity,
+                stockAfter: restoredProduct.stock,
                 reason: `Order #${orderId} Cancelled (Stock Restored)`,
               },
             });
           } else if (item.umkmProductId) {
-            await tx.uMKMProduct.update({
+            const restored = await tx.uMKMProduct.update({
               where: { id: item.umkmProductId },
               data: { stock: { increment: item.quantity } },
+            });
+            await tx.inventoryTransaction.create({
+              data: {
+                umkmProductId: item.umkmProductId,
+                type: 'IN',
+                quantity: item.quantity,
+                stockAfter: restored.stock,
+                reason: `Order #${orderId} Cancelled (Stock Restored)`,
+              },
             });
           }
         }
@@ -584,7 +608,11 @@ export class OrderService {
     return updatedOrder;
   }
 
-  async getTimeline(orderId: string) {
+  async getTimeline(userId: string, orderId: string, role: string) {
+    // Pakai ulang pemeriksaan akses milik getOrderDetail — timeline mengungkap
+    // isi pesanan, jadi syarat bacanya harus sama persis.
+    await this.getOrderDetail(userId, orderId, role);
+
     // Return audit logs that match this order ID in their details
     const logs = await this.prisma.auditLog.findMany({
       where: {

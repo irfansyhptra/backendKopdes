@@ -1,11 +1,8 @@
-import { IsString, IsNotEmpty, IsEnum } from 'class-validator';
+import { IsEnum, IsNotEmpty } from 'class-validator';
 import { PaymentMethod } from '@prisma/client';
+import { DeliveryAddressSelectionDto } from './delivery-address-selection.dto';
 
-export class CheckoutDto {
-  @IsString()
-  @IsNotEmpty()
-  deliveryAddressId!: string;
-
+export class CheckoutDto extends DeliveryAddressSelectionDto {
   @IsEnum(PaymentMethod)
   @IsNotEmpty()
   paymentMethod!: PaymentMethod;

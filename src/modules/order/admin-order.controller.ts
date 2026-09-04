@@ -40,7 +40,7 @@ export class AdminOrderController {
     @Param('id') id: string,
     @Body() dto: UpdateOrderStatusDto,
   ) {
-    const data = await this.orderService.updateStatus(req.user.id, id, dto.status);
+    const data = await this.orderService.updateStatus(req.user.id, id, dto.status, req.user.role);
     return { success: true, data };
   }
 }

@@ -12,16 +12,11 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.CheckoutDto = void 0;
 const class_validator_1 = require("class-validator");
 const client_1 = require("@prisma/client");
-class CheckoutDto {
-    deliveryAddressId;
+const delivery_address_selection_dto_1 = require("./delivery-address-selection.dto");
+class CheckoutDto extends delivery_address_selection_dto_1.DeliveryAddressSelectionDto {
     paymentMethod;
 }
 exports.CheckoutDto = CheckoutDto;
-__decorate([
-    (0, class_validator_1.IsString)(),
-    (0, class_validator_1.IsNotEmpty)(),
-    __metadata("design:type", String)
-], CheckoutDto.prototype, "deliveryAddressId", void 0);
 __decorate([
     (0, class_validator_1.IsEnum)(client_1.PaymentMethod),
     (0, class_validator_1.IsNotEmpty)(),

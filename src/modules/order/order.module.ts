@@ -4,9 +4,10 @@ import { AdminOrderController } from './admin-order.controller';
 import { OrderService } from './order.service';
 import { DatabaseModule } from '../../database/database.module';
 import { CacheModule } from '../../cache/cache.module';
+import { AddressModule } from '../address/address.module';
 
 @Module({
-  imports: [DatabaseModule, CacheModule],
+  imports: [DatabaseModule, CacheModule, AddressModule],
   controllers: [OrderController, AdminOrderController],
   providers: [OrderService],
   exports: [OrderService],

@@ -1,6 +1,7 @@
 import { IsString, IsNotEmpty, IsEnum, IsArray, ValidateNested, IsInt, Min, IsOptional } from 'class-validator';
 import { Type } from 'class-transformer';
 import { PaymentMethod } from '@prisma/client';
+import { DeliveryAddressSelectionDto } from './delivery-address-selection.dto';
 
 export class CreateOrderItemDto {
   @IsString()
@@ -17,15 +18,11 @@ export class CreateOrderItemDto {
   quantity!: number;
 }
 
-export class CreateOrderDto {
+export class CreateOrderDto extends DeliveryAddressSelectionDto {
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => CreateOrderItemDto)
   items!: CreateOrderItemDto[];
-
-  @IsString()
-  @IsNotEmpty()
-  deliveryAddressId!: string;
 
   @IsEnum(PaymentMethod)
   @IsNotEmpty()

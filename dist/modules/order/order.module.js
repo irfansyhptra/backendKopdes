@@ -13,12 +13,13 @@ const admin_order_controller_1 = require("./admin-order.controller");
 const order_service_1 = require("./order.service");
 const database_module_1 = require("../../database/database.module");
 const cache_module_1 = require("../../cache/cache.module");
+const address_module_1 = require("../address/address.module");
 let OrderModule = class OrderModule {
 };
 exports.OrderModule = OrderModule;
 exports.OrderModule = OrderModule = __decorate([
     (0, common_1.Module)({
-        imports: [database_module_1.DatabaseModule, cache_module_1.CacheModule],
+        imports: [database_module_1.DatabaseModule, cache_module_1.CacheModule, address_module_1.AddressModule],
         controllers: [order_controller_1.OrderController, admin_order_controller_1.AdminOrderController],
         providers: [order_service_1.OrderService],
         exports: [order_service_1.OrderService],

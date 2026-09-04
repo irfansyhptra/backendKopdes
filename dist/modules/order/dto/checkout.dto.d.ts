@@ -1,5 +1,5 @@
 import { PaymentMethod } from '@prisma/client';
-export declare class CheckoutDto {
-    deliveryAddressId: string;
+import { DeliveryAddressSelectionDto } from './delivery-address-selection.dto';
+export declare class CheckoutDto extends DeliveryAddressSelectionDto {
     paymentMethod: PaymentMethod;
 }

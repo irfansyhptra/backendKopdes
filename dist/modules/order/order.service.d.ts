@@ -1,15 +1,18 @@
 import { PrismaService } from '../../database/prisma.service';
 import { CacheService } from '../../cache/cache.service';
+import { AddressService } from '../address/address.service';
 import { CheckoutDto } from './dto/checkout.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { OrderStatus, Prisma } from '@prisma/client';
 export declare class OrderService {
     private readonly prisma;
     private readonly cache;
+    private readonly addressService;
     private readonly historyCachePrefix;
     private readonly detailCachePrefix;
     private readonly cacheTtl;
-    constructor(prisma: PrismaService, cache: CacheService);
+    private static readonly STAFF_ROLES;
+    constructor(prisma: PrismaService, cache: CacheService, addressService: AddressService);
     private getHistoryCacheKey;
     private getDetailCacheKey;
     checkout(userId: string, dto: CheckoutDto): Promise<{
@@ -188,6 +191,20 @@ export declare class OrderService {
             estimatedDeliveryTime: Date | null;
             actualDeliveryTime: Date | null;
         }) | null;
+        deliveryAddress: {
+            phone: string;
+            id: string;
+            createdAt: Date;
+            updatedAt: Date;
+            userId: string;
+            title: string;
+            recipientName: string;
+            street: string;
+            city: string;
+            state: string;
+            postalCode: string;
+            isDefault: boolean;
+        };
         items: ({
             product: ({
                 images: {
@@ -254,20 +271,6 @@ export declare class OrderService {
             phone: string | null;
             id: string;
         };
-        deliveryAddress: {
-            phone: string;
-            id: string;
-            createdAt: Date;
-            updatedAt: Date;
-            userId: string;
-            title: string;
-            recipientName: string;
-            street: string;
-            city: string;
-            state: string;
-            postalCode: string;
-            isDefault: boolean;
-        };
     } & {
         id: string;
         createdAt: Date;
@@ -280,7 +283,7 @@ export declare class OrderService {
         customerId: string;
     })[]>;
     getOrderDetail(userId: string, orderId: string, role: string): Promise<any>;
-    updateStatus(userId: string, orderId: string, status: OrderStatus): Promise<{
+    updateStatus(userId: string, orderId: string, status: OrderStatus, role: string): Promise<{
         items: {
             id: string;
             createdAt: Date;
@@ -302,7 +305,7 @@ export declare class OrderService {
         paymentStatus: import("@prisma/client").$Enums.PaymentStatus;
         customerId: string;
     }>;
-    getTimeline(orderId: string): Promise<{
+    getTimeline(userId: string, orderId: string, role: string): Promise<{
         id: string;
         createdAt: Date;
         updatedAt: Date;

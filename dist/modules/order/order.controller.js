@@ -47,7 +47,8 @@ let OrderController = class OrderController {
     }
     async updateStatus(req, orderId, dto) {
         const userId = req.user.id;
-        const order = await this.orderService.updateStatus(userId, orderId, dto.status);
+        const role = req.user.role;
+        const order = await this.orderService.updateStatus(userId, orderId, dto.status, role);
         return { success: true, message: 'Order status updated successfully', order };
     }
     async getInvoice(req, orderId) {
@@ -57,7 +58,7 @@ let OrderController = class OrderController {
         return { success: true, invoice: order.invoice };
     }
     async getTimeline(req, orderId) {
-        const timeline = await this.orderService.getTimeline(orderId);
+        const timeline = await this.orderService.getTimeline(req.user.id, orderId, req.user.role);
         return { success: true, timeline };
     }
     async confirmReceipt(req, orderId) {

@@ -30,6 +30,7 @@ const health_module_1 = require("./modules/health/health.module");
 const seller_module_1 = require("./modules/seller/seller.module");
 const chat_module_1 = require("./modules/chat/chat.module");
 const superadmin_module_1 = require("./modules/superadmin/superadmin.module");
+const address_module_1 = require("./modules/address/address.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -58,6 +59,7 @@ exports.AppModule = AppModule = __decorate([
             health_module_1.HealthModule,
             chat_module_1.ChatModule,
             superadmin_module_1.SuperAdminModule,
+            address_module_1.AddressModule,
         ],
         controllers: [app_controller_1.AppController],
         providers: [app_service_1.AppService],

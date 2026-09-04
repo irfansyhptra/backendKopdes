@@ -7,8 +7,8 @@ export class JwtAuthGuard implements CanActivate {
   private readonly jwtSecret: string;
 
   constructor(private readonly configService: ConfigService) {
-    this.jwtSecret =
-      this.configService.get<string>('JWT_SECRET') || 'default_jwt_secret';
+    // JWT_SECRET wajib ada — divalidasi saat boot di src/config/env.validation.ts
+    this.jwtSecret = this.configService.get<string>('JWT_SECRET')!;
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -20,26 +20,6 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     const token = authHeader.split(' ')[1];
-
-    // Mock token support for offline/client fallback mode testing
-    if (token.startsWith('mock_jwt_access_token_for_')) {
-      const role = token.replace('mock_jwt_access_token_for_', '');
-      request.user = {
-        id: `mock-user-id-${role.toLowerCase()}`,
-        email: `${role.toLowerCase()}@kopdes.co`,
-        role: role,
-      };
-      return true;
-    }
-
-    if (token === 'mock_refreshed_access_token') {
-      request.user = {
-        id: 'mock-user-id-refreshed',
-        email: 'refreshed@kopdes.co',
-        role: 'CUSTOMER',
-      };
-      return true;
-    }
 
     try {
       const payload = JwtHelper.verify(token, this.jwtSecret);

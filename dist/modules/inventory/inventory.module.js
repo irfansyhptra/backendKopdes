@@ -8,10 +8,19 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.InventoryModule = void 0;
 const common_1 = require("@nestjs/common");
+const database_module_1 = require("../../database/database.module");
+const admin_inventory_controller_1 = require("./admin-inventory.controller");
+const seller_inventory_controller_1 = require("./seller-inventory.controller");
+const inventory_service_1 = require("./inventory.service");
 let InventoryModule = class InventoryModule {
 };
 exports.InventoryModule = InventoryModule;
 exports.InventoryModule = InventoryModule = __decorate([
-    (0, common_1.Module)({})
+    (0, common_1.Module)({
+        imports: [database_module_1.DatabaseModule],
+        controllers: [admin_inventory_controller_1.AdminInventoryController, seller_inventory_controller_1.SellerInventoryController],
+        providers: [inventory_service_1.InventoryService],
+        exports: [inventory_service_1.InventoryService],
+    })
 ], InventoryModule);
 //# sourceMappingURL=inventory.module.js.map
