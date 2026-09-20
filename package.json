@@ -22,7 +22,8 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "seed:geo": "ts-node prisma/seed-umkm-geo.ts",
     "seed:discovery": "ts-node prisma/seed-discovery.ts",
-    "seed:content": "ts-node prisma/seed-content.ts"
+    "seed:content": "ts-node prisma/seed-content.ts",
+    "seed:pegawai": "ts-node prisma/seed-pegawai.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
