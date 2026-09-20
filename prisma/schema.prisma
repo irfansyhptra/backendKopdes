@@ -76,6 +76,13 @@ enum UMKMCategory {
   LAINNYA
 }
 
+/// Pengajuan koperasi desa untuk bergabung ke sistem.
+enum KopdesApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum InventoryTransactionType {
   IN
   OUT
@@ -128,6 +135,9 @@ model Koperasi {
   umkms    UMKM[]
   reviews  Review[]
   staff    User[]    @relation("KopdesStaff")
+
+  /// Pengajuan yang melahirkan koperasi ini, bila ia masuk lewat formulir.
+  application KopdesApplication?
 
   /// Filter kasar bounding-box memakai index ini sebelum jarak Haversine
   /// dihitung pada sisa baris.
@@ -677,4 +687,59 @@ model ChatMessage {
   updatedAt      DateTime     @updatedAt
 
   @@index([conversationId])
+}
+
+
+/// Pengajuan bergabung dari pengurus koperasi desa.
+///
+/// Formulirnya publik — koperasi yang belum punya akun tentu belum bisa
+/// login. Yang dikumpulkan hanya cukup untuk memutuskan dan menghubungi:
+/// identitas koperasi, letaknya, dan satu orang pengurus yang nantinya
+/// menjadi Admin Kopdes.
+///
+/// Tidak ada kolom kata sandi di sini. Kata sandi dibuat saat pengajuan
+/// disetujui, ditampilkan satu kali kepada Super Admin untuk diteruskan,
+/// lalu hanya tersimpan sebagai hash di tabel User.
+model KopdesApplication {
+  id String @id @default(uuid())
+
+  // ── Koperasi yang diajukan ──
+  kopdesName  String
+  description String?
+  address     String
+  village     String
+  district    String
+  city        String
+  province    String
+  postalCode  String?
+
+  /// Opsional saat mengajukan: pengurus desa sering tidak tahu koordinatnya.
+  /// Super Admin melengkapi saat menyetujui, dan tanpa itu koperasinya tidak
+  /// akan muncul di pencarian terdekat.
+  latitude  Float?
+  longitude Float?
+
+  // ── Pengurus yang akan menjadi Admin Kopdes ──
+  contactName  String
+  contactEmail String
+  contactPhone String
+
+  /// Catatan bebas dari pemohon.
+  notes String?
+
+  status     KopdesApplicationStatus @default(PENDING)
+  /// Alasan penolakan, atau catatan Super Admin saat menyetujui.
+  reviewNote String?
+  reviewedAt DateTime?
+  reviewedBy String?
+
+  /// Terisi setelah disetujui — koperasi yang lahir dari pengajuan ini.
+  kopdesId String?   @unique
+  kopdes   Koperasi? @relation(fields: [kopdesId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([contactEmail])
 }

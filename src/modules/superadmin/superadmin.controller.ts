@@ -12,6 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { SuperAdminService } from './superadmin.service';
+import { KopdesApplicationService } from './kopdes-application.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -27,7 +28,23 @@ import {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SUPER_ADMIN)
 export class SuperAdminController {
-  constructor(private readonly service: SuperAdminService) {}
+  constructor(
+    private readonly service: SuperAdminService,
+    private readonly applications: KopdesApplicationService,
+  ) {}
+
+  /**
+   * Pemantauan koperasi — **hanya jumlah**.
+   *
+   * Super Admin perlu tahu apakah sebuah koperasi hidup dan seberapa sibuk,
+   * bukan siapa membeli apa. Endpoint ini tidak menerima parameter apa pun
+   * yang bisa membukanya lebih dalam, dan tidak mengembalikan satu pun baris
+   * pesanan, nama pelanggan, maupun nominal transaksi.
+   */
+  @Get('kopdes')
+  async kopdesStats() {
+    return { success: true, data: await this.applications.kopdesStats() };
+  }
 
   @Get('overview')
   async overview() {
