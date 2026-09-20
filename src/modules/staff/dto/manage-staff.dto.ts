@@ -7,19 +7,36 @@ import {
   IsString,
   MinLength,
 } from 'class-validator';
+import { Role } from '@prisma/client';
 import { ASSIGNABLE_TO_PEGAWAI } from '../../../common/permissions';
 
 /**
- * Peran tidak ikut sebagai field.
+ * Peran yang boleh diangkat Admin Kopdes.
  *
- * Admin Kopdes hanya boleh mengangkat PEGAWAI_KOPDES. Menjadikannya kolom
- * yang bisa dikirim klien berarti menyerahkan pencegahan kenaikan wewenang
- * kepada validasi, padahal tidak ada alasan sah untuk mengubahnya — jadi
- * perannya dipasang di service dan tidak pernah dibaca dari body.
- *
- * `kopdesId` juga tidak ada: penugasan selalu mengikuti Kopdes si admin.
+ * Hanya dua. ADMIN_KOPDES tidak ada di sini: admin tidak mengangkat admin
+ * lain, itu wewenang Super Admin. Daftar ini dipakai juga oleh validator,
+ * jadi peran di luar keduanya ditolak sebelum menyentuh service.
+ */
+export const ASSIGNABLE_ROLES = [Role.PEGAWAI_KOPDES, Role.COURIER] as const;
+export type AssignableRole = (typeof ASSIGNABLE_ROLES)[number];
+
+/**
+ * `kopdesId` sengaja tidak ada: penugasan selalu mengikuti Kopdes si admin,
+ * dan menjadikannya kolom yang bisa dikirim klien berarti membuka jalan
+ * memindahkan akun ke desa lain.
  */
 export class CreatePegawaiDto {
+  /**
+   * Dikosongkan berarti pegawai. Kurir adalah peran tersendiri: ia tidak
+   * membuka portal pegawai sama sekali, jadi daftar wewenang di bawah tidak
+   * berlaku untuknya.
+   */
+  @IsIn(ASSIGNABLE_ROLES, {
+    message: 'Peran hanya boleh pegawai atau kurir.',
+  })
+  @IsOptional()
+  role?: AssignableRole;
+
   @IsEmail({}, { message: 'Format email tidak benar.' })
   email!: string;
 

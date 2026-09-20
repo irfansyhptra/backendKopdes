@@ -82,7 +82,7 @@ describe('StaffAccountService', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(prisma.user.findFirst.mock.calls[0][0].where).toMatchObject({
       kopdesId: 'desa-A',
-      role: Role.PEGAWAI_KOPDES,
+      role: { in: [Role.PEGAWAI_KOPDES, Role.COURIER] },
     });
   });
 
@@ -113,6 +113,76 @@ describe('StaffAccountService', () => {
   it('menolak admin menghapus akunnya sendiri', async () => {
     const { service } = build();
     await expect(service.remove(admin, admin.id)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+});
+
+describe('kurir', () => {
+  it('dibuat dengan peran COURIER di Kopdes si admin', async () => {
+    const { service, prisma } = build();
+    prisma.user.findUnique.mockResolvedValue(null);
+    prisma.user.create.mockResolvedValue({
+      id: 'k1', role: Role.COURIER, permissions: [], kopdesId: 'desa-A',
+    });
+
+    await service.create(admin, {
+      email: 'kurir@desa.co', password: 'rahasia123', name: 'Pak Kurir',
+      role: Role.COURIER,
+    });
+
+    const data = prisma.user.create.mock.calls[0][0].data;
+    expect(data.role).toBe(Role.COURIER);
+    expect(data.kopdesId).toBe('desa-A');
+  });
+
+  it('wewenang yang terlanjur dikirim untuk kurir diabaikan', async () => {
+    const { service, prisma } = build();
+    prisma.user.findUnique.mockResolvedValue(null);
+    prisma.user.create.mockResolvedValue({ id: 'k1', role: Role.COURIER, permissions: [] });
+
+    await service.create(admin, {
+      email: 'kurir2@desa.co', password: 'rahasia123', name: 'Kurir',
+      role: Role.COURIER,
+      permissions: [Permission.ORDER_READ, Permission.INVENTORY_READ],
+    });
+
+    // Kurir tidak membuka portal pegawai sama sekali; menyimpan wewenang
+    // untuknya hanya membingungkan pembaca barisnya nanti.
+    expect(prisma.user.create.mock.calls[0][0].data.permissions).toEqual([]);
+  });
+
+  it('tanpa peran tetap menjadi pegawai', async () => {
+    const { service, prisma } = build();
+    prisma.user.findUnique.mockResolvedValue(null);
+    prisma.user.create.mockResolvedValue({ id: 'p1', role: Role.PEGAWAI_KOPDES, permissions: [] });
+
+    await service.create(admin, {
+      email: 'p@desa.co', password: 'rahasia123', name: 'Pegawai',
+    });
+
+    expect(prisma.user.create.mock.calls[0][0].data.role).toBe(Role.PEGAWAI_KOPDES);
+  });
+
+  it('admin tidak bisa mengangkat admin lain lewat jalur ini', async () => {
+    const { service, prisma } = build();
+    prisma.user.findUnique.mockResolvedValue(null);
+    // Validator menolaknya lebih dulu, tapi service tidak boleh bergantung
+    // pada itu — ia lapisan terakhir sebelum baris masuk ke database.
+    await expect(
+      service.create(admin, {
+        email: 'x@desa.co', password: 'rahasia123', name: 'X',
+        role: Role.ADMIN_KOPDES as never,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.user.create).not.toHaveBeenCalled();
+  });
+
+  it('daftar akun memuat pegawai dan kurir, bukan admin', async () => {
+    const { service, prisma } = build();
+    prisma.user.findMany.mockResolvedValue([]);
+    await service.list(admin);
+    expect(prisma.user.findMany.mock.calls[0][0].where.role).toEqual({
+      in: [Role.PEGAWAI_KOPDES, Role.COURIER],
+    });
   });
 });
 

@@ -32,8 +32,10 @@ export class AdminDeliveryController {
 
   @Get('couriers')
   @RequirePermissions(Permission.DELIVERY_READ)
-  async couriers() {
-    const data = await this.deliveryService.listCouriers();
+  async couriers(@Req() req: AuthenticatedRequest) {
+    const data = await this.deliveryService.listCouriers(
+      req.user.kopdesId ?? null,
+    );
     return { success: true, data };
   }
 

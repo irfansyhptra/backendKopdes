@@ -15,6 +15,7 @@ import {
   resolvePermissions,
 } from '../../common/permissions';
 import type { AuthenticatedUser } from '../auth/authenticated-request';
+import { ASSIGNABLE_ROLES } from './dto/manage-staff.dto';
 import type { CreatePegawaiDto, UpdatePegawaiDto } from './dto/manage-staff.dto';
 
 /**
@@ -22,8 +23,9 @@ import type { CreatePegawaiDto, UpdatePegawaiDto } from './dto/manage-staff.dto'
  *
  * Tiga batas dijaga di sini, bukan di UI maupun di DTO saja:
  *
- *  1. **Peran.** Yang dibuat selalu PEGAWAI_KOPDES. Perannya tidak pernah
- *     dibaca dari body, jadi tidak ada jalan meminta ADMIN_KOPDES.
+ *  1. **Peran.** Hanya PEGAWAI_KOPDES atau COURIER. Nilai di luar keduanya
+ *     ditolak di sini, bukan hanya oleh validator — admin tidak mengangkat
+ *     admin lain, itu wewenang Super Admin.
  *  2. **Desa.** Penugasan mengikuti Kopdes si admin, dan setiap akun yang
  *     disentuh diperiksa lebih dulu apakah memang milik desa itu. Tanpa ini
  *     admin desa A bisa mengubah pegawai desa B hanya dengan menebak id-nya.
@@ -70,11 +72,11 @@ export class StaffAccountService {
    */
   private async targetOrThrow(id: string, kopdesId: string) {
     const user = await this.prisma.user.findFirst({
-      where: { id, role: Role.PEGAWAI_KOPDES, kopdesId },
+      where: { id, role: { in: [...ASSIGNABLE_ROLES] }, kopdesId },
       select: StaffAccountService.SAFE_SELECT,
     });
     if (!user) {
-      throw new NotFoundException('Pegawai tidak ditemukan di Kopdes ini.');
+      throw new NotFoundException('Akun tidak ditemukan di Kopdes ini.');
     }
     return user;
   }
@@ -97,8 +99,8 @@ export class StaffAccountService {
   async list(actor: AuthenticatedUser) {
     const kopdesId = this.scopeOf(actor);
     const rows = await this.prisma.user.findMany({
-      where: { role: Role.PEGAWAI_KOPDES, kopdesId },
-      orderBy: { createdAt: 'desc' },
+      where: { role: { in: [...ASSIGNABLE_ROLES] }, kopdesId },
+      orderBy: [{ role: 'asc' }, { createdAt: 'desc' }],
       select: StaffAccountService.SAFE_SELECT,
     });
 
@@ -121,15 +123,24 @@ export class StaffAccountService {
     });
     if (taken) throw new ConflictException('Email sudah terdaftar.');
 
+    const role = dto.role ?? Role.PEGAWAI_KOPDES;
+    if (!ASSIGNABLE_ROLES.includes(role)) {
+      throw new ForbiddenException(
+        'Admin Kopdes hanya dapat mengangkat pegawai atau kurir.',
+      );
+    }
+
     const user = await this.prisma.user.create({
       data: {
         email,
         password: PasswordHelper.hash(dto.password),
         name: dto.name.trim(),
         phone: dto.phone?.trim() || null,
-        role: Role.PEGAWAI_KOPDES,
+        role,
         kopdesId,
-        permissions: dto.permissions ?? [],
+        // Kurir tidak membuka portal pegawai sama sekali; bawaan perannya
+        // memang kosong, jadi daftar wewenang diabaikan untuknya.
+        permissions: role === Role.COURIER ? [] : (dto.permissions ?? []),
       },
       select: StaffAccountService.SAFE_SELECT,
     });
@@ -143,14 +154,17 @@ export class StaffAccountService {
 
   async update(actor: AuthenticatedUser, id: string, dto: UpdatePegawaiDto) {
     const kopdesId = this.scopeOf(actor);
-    await this.targetOrThrow(id, kopdesId);
+    const target = await this.targetOrThrow(id, kopdesId);
+    // Wewenang tidak berlaku bagi kurir; menyimpannya hanya akan
+    // membingungkan siapa pun yang membaca barisnya nanti.
+    const isCourier = target.role === Role.COURIER;
 
     const user = await this.prisma.user.update({
       where: { id },
       data: {
         ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
         ...(dto.phone !== undefined ? { phone: dto.phone.trim() || null } : {}),
-        ...(dto.permissions !== undefined
+        ...(dto.permissions !== undefined && !isCourier
           ? { permissions: dto.permissions }
           : {}),
         ...(dto.password

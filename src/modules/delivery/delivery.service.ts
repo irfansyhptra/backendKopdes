@@ -11,8 +11,18 @@ import { DeliveryStatus, Prisma, Role } from '@prisma/client';
 export class DeliveryService {
   constructor(private readonly prisma: PrismaService) {}
 
-  // Daftar kuril koperasi + jumlah pengantaran aktif tiap kurir.
-  async listCouriers() {
+  /**
+   * Kurir milik satu Kopdes, beserta beban pengantaran aktifnya.
+   *
+   * Disaring `kopdesId`. Sebelumnya daftar ini global: setiap koperasi
+   * melihat kurir koperasi lain dan bisa menugaskannya mengantar pesanan
+   * desanya sendiri.
+   *
+   * Kurir tanpa penugasan Kopdes tidak muncul di mana pun — itu memang
+   * keadaan yang harus diperbaiki Super Admin, bukan disamarkan dengan
+   * menampilkannya ke semua desa.
+   */
+  async listCouriers(kopdesId: string | null = null) {
     const activeStatuses: DeliveryStatus[] = [
       DeliveryStatus.ASSIGNED,
       DeliveryStatus.ACCEPTED,
@@ -22,7 +32,7 @@ export class DeliveryService {
     ];
 
     const couriers = await this.prisma.user.findMany({
-      where: { role: Role.COURIER },
+      where: { role: Role.COURIER, ...(kopdesId ? { kopdesId } : {}) },
       select: { id: true, name: true, email: true, phone: true },
       orderBy: { name: 'asc' },
     });
@@ -128,9 +138,19 @@ export class DeliveryService {
 
     const courier = await this.prisma.user.findUnique({
       where: { id: courierId },
+      select: { id: true, role: true, kopdesId: true },
     });
     if (!courier || courier.role !== Role.COURIER) {
       throw new BadRequestException('Kurir tidak valid');
+    }
+
+    // Kurir desa lain tidak boleh ditugasi, bahkan bila id-nya ditebak
+    // benar. Tanpa penjagaan ini, menyaring daftar kurir di layar hanya
+    // menyembunyikan pilihannya — permintaan langsung tetap lolos.
+    if (actor?.kopdesId && courier.kopdesId !== actor.kopdesId) {
+      throw new ForbiddenException(
+        'Kurir ini bukan kurir Kopdes tempat Anda bertugas',
+      );
     }
 
     const updated = await this.prisma.delivery.update({
