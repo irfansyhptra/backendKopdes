@@ -30,29 +30,42 @@ describe('lingkungan', () => {
     expect(svc.isConfigured()).toBe(true);
   });
 
-  it('kunci produksi dengan IS_PRODUCTION=false ditolak', async () => {
-    // Kunci produksi menembak sandbox hanya menghasilkan 401 — dan yang lebih
-    // berbahaya, kunci sandbox di produksi berarti tidak ada uang yang masuk.
+  it('awalan kunci yang tidak biasa hanya diperingatkan, tidak menolak', async () => {
+    // Awalan `SB-` kebiasaan Midtrans, bukan aturan: sebagian akun punya
+    // kunci Sandbox sah tanpa awalan itu. Menolaknya berarti mematikan
+    // pembayaran yang sebenarnya berfungsi.
     const svc = build({
-      MIDTRANS_SERVER_KEY: 'Mid-server-produksi',
+      MIDTRANS_SERVER_KEY: 'Mid-server-tanpa-awalan',
       MIDTRANS_IS_PRODUCTION: 'false',
     });
-    expect(svc.mismatchedEnvironment()).toBe(true);
-    expect(svc.isConfigured()).toBe(false);
-    await expect(svc.charge({})).rejects.toBeInstanceOf(
-      ServiceUnavailableException,
-    );
+    expect(svc.suspiciousKeyPrefix()).toBe(true);
+    expect(svc.isConfigured()).toBe(true);
+
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status_code: '201', status_message: 'ok' }),
+    }) as never;
+    await expect(svc.charge({})).resolves.toMatchObject({ status_code: '201' });
   });
 
-  it('kunci sandbox dengan IS_PRODUCTION=true juga ditolak', async () => {
+  it('awalan yang wajar tidak menimbulkan peringatan', () => {
+    expect(build().suspiciousKeyPrefix()).toBe(false);
+    expect(
+      build({
+        MIDTRANS_SERVER_KEY: 'Mid-server-produksi',
+        MIDTRANS_IS_PRODUCTION: 'true',
+      }).suspiciousKeyPrefix(),
+    ).toBe(false);
+  });
+
+  it('IS_PRODUCTION=true menembak endpoint produksi', () => {
+    // Yang benar-benar menentukan lingkungan adalah URL-nya, bukan awalan
+    // kunci; salah lingkungan dijawab 401 oleh Midtrans sendiri.
     const svc = build({
-      MIDTRANS_SERVER_KEY: 'SB-Mid-server-rahasia',
+      MIDTRANS_SERVER_KEY: 'Mid-server-produksi',
       MIDTRANS_IS_PRODUCTION: 'true',
     });
-    expect(svc.mismatchedEnvironment()).toBe(true);
-    await expect(svc.charge({})).rejects.toBeInstanceOf(
-      ServiceUnavailableException,
-    );
+    expect(svc.baseUrl).toBe(MidtransService.PRODUCTION_URL);
   });
 
   it('tanpa kunci, pembayaran ditolak dengan kalimat yang bisa dipahami', async () => {

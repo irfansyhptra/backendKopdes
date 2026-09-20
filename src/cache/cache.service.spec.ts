@@ -9,6 +9,16 @@ describe('CacheService', () => {
   let service: CacheService;
   let module: TestingModule;
 
+  /**
+   * Tes integrasi: ia menyambung ke Redis sungguhan lewat REDIS_URL.
+   *
+   * Batas waktu dinaikkan dari 5 detik bawaan Jest karena suite ini berjalan
+   * bersama 25 suite lain di beberapa worker sekaligus — perjalanan pulang
+   * pergi ke Redis terkelola bisa melewati 5 detik saat semuanya berebut,
+   * dan kegagalan seperti itu tidak mengatakan apa pun tentang kodenya.
+   */
+  jest.setTimeout(30_000);
+
   beforeAll(async () => {
     module = await Test.createTestingModule({
       imports: [

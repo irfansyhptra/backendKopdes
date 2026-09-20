@@ -38,26 +38,37 @@ export class MidtransService {
       this.logger.warn(
         'MIDTRANS_SERVER_KEY belum diisi — pembayaran online akan ditolak.',
       );
-    } else if (this.mismatchedEnvironment()) {
-      // Peringatan keras, bukan diam: kunci produksi yang dipakai menembak
-      // sandbox hanya menghasilkan 401, dan sebaliknya kunci sandbox di
-      // produksi berarti tidak ada uang yang benar-benar masuk.
-      this.logger.error(
-        `Kunci Midtrans tidak cocok dengan lingkungannya. ` +
-          `MIDTRANS_IS_PRODUCTION=${this.isProduction}, tetapi kuncinya ` +
-          `${this.isSandboxKey() ? 'kunci Sandbox (SB-)' : 'kunci Produksi'}.`,
+    } else if (this.suspiciousKeyPrefix()) {
+      // Peringatan, bukan penolakan.
+      //
+      // Awalan `SB-` adalah kebiasaan Midtrans, bukan aturan: sebagian akun
+      // punya kunci Sandbox yang sah tanpa awalan itu. Menolaknya berarti
+      // mematikan pembayaran yang sebenarnya berfungsi — dan salah
+      // lingkungan pun tidak menghanguskan uang, ia hanya dijawab 401 oleh
+      // Midtrans. Jadi yang berhak memutuskan adalah jawaban API-nya.
+      this.logger.warn(
+        `Awalan kunci Midtrans tidak seperti biasanya untuk ` +
+          `MIDTRANS_IS_PRODUCTION=${this.isProduction}. Pastikan kunci ini ` +
+          `memang milik lingkungan ${this.isProduction ? 'Produksi' : 'Sandbox'}; ` +
+          `permintaan akan dijawab 401 bila keliru.`,
       );
     }
   }
 
-  /** Kunci sandbox Midtrans selalu berawalan `SB-`. */
-  private isSandboxKey(): boolean {
+  /** Kunci Sandbox Midtrans **biasanya** berawalan `SB-`. */
+  private hasSandboxPrefix(): boolean {
     return (this.serverKey ?? '').startsWith('SB-');
   }
 
-  mismatchedEnvironment(): boolean {
+  /**
+   * Apakah awalan kuncinya tidak seperti biasanya untuk lingkungan ini.
+   *
+   * Hanya untuk peringatan. Tidak dipakai menolak permintaan — lihat alasan
+   * di konstruktor.
+   */
+  suspiciousKeyPrefix(): boolean {
     if (!this.serverKey) return false;
-    return this.isProduction === this.isSandboxKey();
+    return this.isProduction === this.hasSandboxPrefix();
   }
 
   get baseUrl(): string {
@@ -67,20 +78,13 @@ export class MidtransService {
   }
 
   isConfigured(): boolean {
-    return Boolean(this.serverKey) && !this.mismatchedEnvironment();
+    return Boolean(this.serverKey);
   }
 
   private assertConfigured() {
     if (!this.serverKey) {
       throw new ServiceUnavailableException(
         'Pembayaran online belum dikonfigurasi. Hubungi pengurus koperasi.',
-      );
-    }
-    if (this.mismatchedEnvironment()) {
-      throw new ServiceUnavailableException(
-        'Konfigurasi pembayaran tidak konsisten: kunci Midtrans tidak cocok ' +
-          'dengan MIDTRANS_IS_PRODUCTION. Pembayaran dihentikan agar tidak ' +
-          'ada transaksi yang salah lingkungan.',
       );
     }
   }
