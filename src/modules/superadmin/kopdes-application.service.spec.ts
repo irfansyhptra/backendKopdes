@@ -23,6 +23,7 @@ function build() {
       findMany: jest.fn(),
       create: jest.fn().mockResolvedValue({ id: 'a1' }),
       update: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       groupBy: jest.fn(),
     },
     user: { findUnique: jest.fn(), create: jest.fn(), groupBy: jest.fn() },
@@ -167,7 +168,6 @@ describe('pembuatan langsung', () => {
     prisma.$transaction.mockImplementation((fn: never) =>
       (fn as unknown as (t: unknown) => unknown)(tx),
     );
-    prisma.kopdesApplication.updateMany = jest.fn().mockResolvedValue({ count: 0 });
     return { service, prisma, tx };
   }
 

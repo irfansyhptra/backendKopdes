@@ -305,10 +305,62 @@ export class ProductService {
       });
     }
 
+    // Gambar yang sudah diunggah klien ke penyimpanan luar. Tidak ada berkas
+    // yang melewati server di jalur ini.
+    await this.attachImageUrls(product.id, dto.imageUrls, files?.length ?? 0);
+
     // Invalidate product caches
     await this.invalidateCache();
 
     return this.findOne(product.id);
+  }
+
+  /**
+   * Memastikan tepat ada satu gambar utama.
+   *
+   * Dipanggil setelah penghapusan: kalau yang terhapus kebetulan gambar
+   * utamanya, sisanya tidak punya penanda sama sekali dan kartu produk
+   * tampil kosong di katalog.
+   */
+  private async ensurePrimaryImage(productId: string) {
+    const primary = await this.prisma.productImage.findFirst({
+      where: { productId, isPrimary: true },
+      select: { id: true },
+    });
+    if (primary) return;
+    const first = await this.prisma.productImage.findFirst({
+      where: { productId },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
+    if (first) {
+      await this.prisma.productImage.update({
+        where: { id: first.id },
+        data: { isPrimary: true },
+      });
+    }
+  }
+
+  /**
+   * Menyimpan URL gambar yang diunggah klien.
+   *
+   * `offset` menjaga penanda gambar utama tetap satu: kalau sudah ada berkas
+   * yang diunggah lewat multipart, yang pertama di antara merekalah yang
+   * utama, dan URL-URL ini menyusul di belakangnya.
+   */
+  private async attachImageUrls(
+    productId: string,
+    urls: string[] | undefined,
+    offset = 0,
+  ) {
+    if (!urls?.length) return;
+    await this.prisma.productImage.createMany({
+      data: urls.map((url, i) => ({
+        productId,
+        url,
+        isPrimary: offset === 0 && i === 0,
+      })),
+    });
   }
 
   async update(
@@ -399,6 +451,23 @@ export class ProductService {
     });
 
     // Invalidate product caches
+    // Gambar dari penyimpanan luar. `keepImageUrls` dikirim berarti daftar
+    // gambar diganti seluruhnya; tidak dikirim berarti gambar lama dibiarkan.
+    // Tanpa pembedaan ini, menyunting harga saja akan menghapus gambarnya.
+    if (dto.keepImageUrls !== undefined || dto.imageUrls?.length) {
+      if (dto.keepImageUrls !== undefined) {
+        await this.prisma.productImage.deleteMany({
+          where: { productId: id, url: { notIn: dto.keepImageUrls } },
+        });
+      }
+      const remaining = await this.prisma.productImage.count({
+        where: { productId: id },
+      });
+      await this.attachImageUrls(id, dto.imageUrls, remaining);
+      // Barang tanpa gambar utama tampil sebagai kotak kosong di katalog.
+      await this.ensurePrimaryImage(id);
+    }
+
     await this.invalidateCache();
 
     return this.findOne(id);

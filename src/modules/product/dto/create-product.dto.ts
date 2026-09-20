@@ -1,4 +1,6 @@
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsDateString,
   IsInt,
@@ -6,6 +8,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsUrl,
   MaxLength,
   Min,
 } from 'class-validator';
@@ -83,4 +86,31 @@ export class CreateProductDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  /**
+   * Gambar yang sudah diunggah klien ke penyimpanan luar (Cloudinary).
+   *
+   * Jalur ini ada karena berkasnya tidak perlu melewati server: fungsi
+   * serverless di Vercel membatasi badan permintaan pada 4,5 MB, sementara
+   * satu foto ponsel saja sering melampauinya. Klien mengunggah langsung,
+   * lalu mengirim URL-nya ke sini.
+   *
+   * `images` (multipart) tetap diterima untuk klien lama.
+   *
+   * Hanya URL https yang diterima. Tanpa itu, seseorang bisa menitipkan
+   * `javascript:` atau tautan ke host mana pun dan itulah yang akan dirender
+   * halaman katalog.
+   */
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsUrl({ protocols: ['https'], require_protocol: true }, { each: true })
+  @IsOptional()
+  imageUrls?: string[];
+
+  /** Dikirim saat menyunting: URL gambar lama yang tetap dipertahankan. */
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsUrl({ protocols: ['https'], require_protocol: true }, { each: true })
+  @IsOptional()
+  keepImageUrls?: string[];
 }

@@ -1,4 +1,7 @@
 import {
+  ArrayMaxSize,
+  IsArray,
+  IsUrl,
   IsString,
   IsOptional,
   IsNumber,
@@ -79,4 +82,25 @@ export class UpdateProductDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  /** Gambar baru yang sudah diunggah klien; lihat CreateProductDto. */
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsUrl({ protocols: ['https'], require_protocol: true }, { each: true })
+  @IsOptional()
+  imageUrls?: string[];
+
+  /**
+   * URL gambar lama yang tetap dipertahankan.
+   *
+   * Dikirim berarti daftar gambar diganti seluruhnya oleh gabungan
+   * `keepImageUrls` + `imageUrls`; tidak dikirim berarti gambar lama
+   * dibiarkan apa adanya. Tanpa pembedaan ini, menyunting harga saja akan
+   * menghapus seluruh gambar barang.
+   */
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsUrl({ protocols: ['https'], require_protocol: true }, { each: true })
+  @IsOptional()
+  keepImageUrls?: string[];
 }
