@@ -9,10 +9,13 @@ import {
   Body,
   HttpCode,
   HttpStatus,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { SuperAdminService } from './superadmin.service';
 import { KopdesApplicationService } from './kopdes-application.service';
+import { CreateKopdesDirectDto } from './dto/kopdes-application.dto';
+import type { AuthenticatedRequest } from '../auth/authenticated-request';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -44,6 +47,27 @@ export class SuperAdminController {
   @Get('kopdes')
   async kopdesStats() {
     return { success: true, data: await this.applications.kopdesStats() };
+  }
+
+  /**
+   * Membuat koperasi tanpa melewati formulir pengajuan.
+   *
+   * Untuk permintaan yang datang langsung — telepon, surat, tatap muka —
+   * ketika mengharuskan pengurus mengisi formulir hanya menambah langkah
+   * tanpa menambah keyakinan.
+   */
+  @Post('kopdes')
+  async createKopdes(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: CreateKopdesDirectDto,
+  ) {
+    const data = await this.applications.createDirect(req.user.id, dto);
+    return {
+      success: true,
+      message:
+        'Koperasi dan akun Admin Kopdes dibuat. Salin kata sandi awal sekarang — ia tidak ditampilkan lagi.',
+      data,
+    };
   }
 
   @Get('overview')

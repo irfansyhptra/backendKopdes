@@ -150,6 +150,73 @@ describe('persetujuan', () => {
   });
 });
 
+describe('pembuatan langsung', () => {
+  const FORM_DIRECT = {
+    kopdesName: 'Kopdes Telepon', address: 'Jl. A', village: 'V', district: 'D',
+    city: 'C', province: 'P', latitude: 5.5, longitude: 95.3,
+    contactName: 'Ibu Sari', contactEmail: 'Sari@Desa.co', contactPhone: '081200000009',
+  };
+
+  function directBuild() {
+    const { service, prisma } = build();
+    prisma.user.findUnique.mockResolvedValue(null);
+    const tx = {
+      koperasi: { create: jest.fn().mockResolvedValue({ id: 'k9' }) },
+      user: { create: jest.fn().mockResolvedValue({ id: 'u9' }) },
+    };
+    prisma.$transaction.mockImplementation((fn: never) =>
+      (fn as unknown as (t: unknown) => unknown)(tx),
+    );
+    prisma.kopdesApplication.updateMany = jest.fn().mockResolvedValue({ count: 0 });
+    return { service, prisma, tx };
+  }
+
+  it('menghasilkan koperasi dan admin yang sama dengan jalur persetujuan', async () => {
+    const { service, tx } = directBuild();
+    const out = await service.createDirect('super-1', FORM_DIRECT as never);
+
+    expect(tx.koperasi.create.mock.calls[0][0].data).toMatchObject({
+      name: 'Kopdes Telepon', latitude: 5.5, longitude: 95.3,
+      isActive: true, isVerified: true,
+    });
+    expect(tx.user.create.mock.calls[0][0].data.role).toBe(Role.ADMIN_KOPDES);
+    expect(tx.user.create.mock.calls[0][0].data.kopdesId).toBe('k9');
+    expect(out.initialPassword).toHaveLength(12);
+  });
+
+  it('email pengurus dinormalkan sama seperti di formulir', async () => {
+    const { service, tx } = directBuild();
+    await service.createDirect('super-1', FORM_DIRECT as never);
+    expect(tx.user.create.mock.calls[0][0].data.email).toBe('sari@desa.co');
+  });
+
+  it('tidak membuat baris pengajuan palsu', async () => {
+    const { service, prisma } = directBuild();
+    await service.createDirect('super-1', FORM_DIRECT as never);
+    // Koperasi yang masuk langsung memang tidak pernah mengajukan;
+    // mencatatkan pengajuan palsu membuat riwayat tinjauan berbohong.
+    expect(prisma.kopdesApplication.create).not.toHaveBeenCalled();
+  });
+
+  it('pengajuan menunggu dari email yang sama ikut ditutup', async () => {
+    const { service, prisma } = directBuild();
+    await service.createDirect('super-1', FORM_DIRECT as never);
+    // Kalau tidak, pengajuannya tergantung selamanya di kotak masuk padahal
+    // koperasinya sudah berdiri.
+    const call = prisma.kopdesApplication.updateMany.mock.calls[0][0];
+    expect(call.where).toMatchObject({ contactEmail: 'sari@desa.co', status: 'PENDING' });
+    expect(call.data.kopdesId).toBe('k9');
+  });
+
+  it('menolak email yang sudah menjadi akun', async () => {
+    const { service, prisma } = build();
+    prisma.user.findUnique.mockResolvedValue({ id: 'ada' });
+    await expect(
+      service.createDirect('super-1', FORM_DIRECT as never),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+});
+
 describe('pemantauan koperasi', () => {
   it('hanya mengembalikan jumlah, tanpa satu pun rincian pesanan', async () => {
     const { service, prisma } = build();

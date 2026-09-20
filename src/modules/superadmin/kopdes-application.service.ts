@@ -10,6 +10,7 @@ import { PrismaService } from '../../database/prisma.service';
 import { PasswordHelper } from '../auth/helpers/crypto.helper';
 import type {
   ApproveKopdesApplicationDto,
+  CreateKopdesDirectDto,
   RejectKopdesApplicationDto,
   SubmitKopdesApplicationDto,
 } from './dto/kopdes-application.dto';
@@ -141,6 +142,124 @@ export class KopdesApplicationService {
    * berlalu tidak ada cara membacanya lagi — yang tersimpan hanya hash-nya —
    * jadi Super Admin harus menyalinnya sebelum menutup halaman.
    */
+  /**
+   * Koperasi beserta pengurusnya, dalam satu transaksi.
+   *
+   * Dipakai dua jalur: persetujuan pengajuan, dan pembuatan langsung oleh
+   * Super Admin. Keduanya harus menghasilkan keadaan yang persis sama —
+   * menyalin logikanya akan membuat salah satu jalur pelan-pelan berbeda.
+   */
+  private async createKopdesWithAdmin(
+    tx: Prisma.TransactionClient,
+    input: {
+      kopdesName: string;
+      description?: string | null;
+      address: string;
+      village: string;
+      district: string;
+      city: string;
+      province: string;
+      postalCode?: string | null;
+      latitude: number;
+      longitude: number;
+      contactName: string;
+      contactEmail: string;
+      contactPhone: string;
+    },
+    initialPassword: string,
+  ) {
+    const kopdes = await tx.koperasi.create({
+      data: {
+        name: input.kopdesName,
+        description: input.description ?? null,
+        address: input.address,
+        village: input.village,
+        district: input.district,
+        city: input.city,
+        province: input.province,
+        postalCode: input.postalCode ?? null,
+        latitude: input.latitude,
+        longitude: input.longitude,
+        phone: input.contactPhone,
+        isActive: true,
+        // Diverifikasi karena Super Admin baru saja memeriksanya sendiri.
+        isVerified: true,
+      },
+    });
+
+    const admin = await tx.user.create({
+      data: {
+        email: input.contactEmail,
+        password: PasswordHelper.hash(initialPassword),
+        name: input.contactName,
+        phone: input.contactPhone,
+        role: Role.ADMIN_KOPDES,
+        kopdesId: kopdes.id,
+        // Kosong = pakai bawaan peran Admin Kopdes.
+        permissions: [],
+      },
+      select: { id: true, email: true, name: true, role: true },
+    });
+
+    return { kopdes, admin };
+  }
+
+  /** Email pengurus belum boleh dipakai akun mana pun. */
+  private async assertEmailFree(email: string) {
+    const taken = await this.prisma.user.findUnique({
+      where: { email },
+      select: { id: true },
+    });
+    if (taken) {
+      throw new ConflictException('Email pengurus sudah dipakai akun lain.');
+    }
+  }
+
+  /**
+   * Membuat koperasi tanpa melewati formulir pengajuan.
+   *
+   * Untuk permintaan yang datang langsung — lewat telepon, surat, atau tatap
+   * muka — ketika mengharuskan pengurus mengisi formulir hanya menambah
+   * langkah tanpa menambah keyakinan: Super Admin toh sudah berbicara dengan
+   * orangnya.
+   *
+   * Tidak ada baris KopdesApplication yang dibuat-buat untuk ini. Koperasi
+   * yang masuk langsung memang tidak pernah mengajukan, dan mencatatkan
+   * pengajuan palsu akan membuat riwayat tinjauan berbohong.
+   */
+  async createDirect(actorId: string, dto: CreateKopdesDirectDto) {
+    const contactEmail = KopdesApplicationService.normalizeEmail(
+      dto.contactEmail,
+    );
+    await this.assertEmailFree(contactEmail);
+
+    const initialPassword =
+      dto.initialPassword ?? KopdesApplicationService.generatePassword();
+
+    const result = await this.prisma.$transaction((tx) =>
+      this.createKopdesWithAdmin(
+        tx,
+        { ...dto, contactEmail },
+        initialPassword,
+      ),
+    );
+
+    // Pengajuan yang masih menunggu dari email yang sama menjadi tidak
+    // relevan: koperasinya sudah berdiri lewat jalur lain.
+    await this.prisma.kopdesApplication.updateMany({
+      where: { contactEmail, status: KopdesApplicationStatus.PENDING },
+      data: {
+        status: KopdesApplicationStatus.APPROVED,
+        reviewNote: 'Koperasi dibuat langsung oleh pengurus sistem.',
+        reviewedAt: new Date(),
+        reviewedBy: actorId,
+        kopdesId: result.kopdes.id,
+      },
+    });
+
+    return { ...result, initialPassword };
+  }
+
   async approve(
     id: string,
     reviewerId: string,
@@ -162,38 +281,11 @@ export class KopdesApplicationService {
       dto.initialPassword ?? KopdesApplicationService.generatePassword();
 
     const result = await this.prisma.$transaction(async (tx) => {
-      const kopdes = await tx.koperasi.create({
-        data: {
-          name: app.kopdesName,
-          description: app.description,
-          address: app.address,
-          village: app.village,
-          district: app.district,
-          city: app.city,
-          province: app.province,
-          postalCode: app.postalCode,
-          latitude: dto.latitude,
-          longitude: dto.longitude,
-          phone: app.contactPhone,
-          isActive: true,
-          // Diverifikasi karena Super Admin baru saja memeriksanya sendiri.
-          isVerified: true,
-        },
-      });
-
-      const admin = await tx.user.create({
-        data: {
-          email: app.contactEmail,
-          password: PasswordHelper.hash(initialPassword),
-          name: app.contactName,
-          phone: app.contactPhone,
-          role: Role.ADMIN_KOPDES,
-          kopdesId: kopdes.id,
-          // Kosong = pakai bawaan peran Admin Kopdes.
-          permissions: [],
-        },
-        select: { id: true, email: true, name: true, role: true },
-      });
+      const { kopdes, admin } = await this.createKopdesWithAdmin(
+        tx,
+        { ...app, latitude: dto.latitude, longitude: dto.longitude },
+        initialPassword,
+      );
 
       const application = await tx.kopdesApplication.update({
         where: { id },
