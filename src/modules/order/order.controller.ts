@@ -1,4 +1,16 @@
-import { Controller, Get, Post, Put, Body, Req, UseGuards, Param, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Body,
+  Req,
+  UseGuards,
+  Param,
+  Query,
+  DefaultValuePipe,
+  ParseIntPipe,
+} from '@nestjs/common';
 import { OrderService } from './order.service';
 import { CheckoutDto } from './dto/checkout.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -25,10 +37,18 @@ export class OrderController {
   }
 
   @Get('history')
-  async getOrderHistory(@Req() req: any) {
+  async getOrderHistory(
+    @Req() req: any,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
+  ) {
     const userId = req.user.id;
-    const orders = await this.orderService.getOrderHistory(userId);
-    return { success: true, orders };
+    const { orders, meta } = await this.orderService.getOrderHistory(
+      userId,
+      page,
+      limit,
+    );
+    return { success: true, orders, meta };
   }
 
   @Get(':id')
@@ -47,8 +67,17 @@ export class OrderController {
   ) {
     const userId = req.user.id;
     const role = req.user.role;
-    const order = await this.orderService.updateStatus(userId, orderId, dto.status, role);
-    return { success: true, message: 'Order status updated successfully', order };
+    const order = await this.orderService.updateStatus(
+      userId,
+      orderId,
+      dto.status,
+      role,
+    );
+    return {
+      success: true,
+      message: 'Order status updated successfully',
+      order,
+    };
   }
 
   @Get(':id/invoice')
@@ -61,7 +90,11 @@ export class OrderController {
 
   @Get(':id/timeline')
   async getTimeline(@Req() req: any, @Param('id') orderId: string) {
-    const timeline = await this.orderService.getTimeline(req.user.id, orderId, req.user.role);
+    const timeline = await this.orderService.getTimeline(
+      req.user.id,
+      orderId,
+      req.user.role,
+    );
     return { success: true, timeline };
   }
 
@@ -69,12 +102,15 @@ export class OrderController {
   @Post(':id/confirm-receipt')
   async confirmReceipt(@Req() req: any, @Param('id') orderId: string) {
     const userId = req.user.id;
-    const order = await this.orderService.confirmCustomerDelivery(userId, orderId);
+    const order = await this.orderService.confirmCustomerDelivery(
+      userId,
+      orderId,
+    );
     return {
       success: true,
-      message: 'Konfirmasi penerimaan barang berhasil. Transaksi pengiriman selesai.',
+      message:
+        'Konfirmasi penerimaan barang berhasil. Transaksi pengiriman selesai.',
       order,
     };
   }
 }
-

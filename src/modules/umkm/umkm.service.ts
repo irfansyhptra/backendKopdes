@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { CacheService } from '../../cache/cache.service';
 import { UMKMStatus } from '@prisma/client';
@@ -8,6 +12,7 @@ import {
   ListUmkmQueryDto,
   ListUmkmProductQueryDto,
 } from './dto/list-umkm-query.dto';
+import { UpdateUmkmLocationDto } from './dto/update-umkm-location.dto';
 
 @Injectable()
 export class UmkmService {
@@ -112,5 +117,56 @@ export class UmkmService {
 
     await this.cacheService.deletePattern('cache:products:*');
     return { ...product, price: Number(product.price) };
+  }
+
+  /**
+   * Mengisi koordinat & profil lokasi Mitra UMKM.
+   *
+   * Dipakai form Admin Kopdes. Tanpa koordinat, UMKM tidak pernah muncul di
+   * `/umkm/nearby` — itu perilaku yang benar, dan form ini jalan keluarnya.
+   *
+   * Latitude dan longitude harus diisi berpasangan: satu koordinat saja tidak
+   * bisa dipakai menghitung jarak dan hanya akan membuat data setengah jadi.
+   */
+  async updateLocation(id: string, dto: UpdateUmkmLocationDto) {
+    const umkm = await this.prisma.uMKM.findUnique({
+      where: { id },
+      select: { id: true, latitude: true, longitude: true },
+    });
+    if (!umkm) throw new NotFoundException('Mitra UMKM tidak ditemukan.');
+
+    const nextLat = dto.latitude ?? umkm.latitude;
+    const nextLng = dto.longitude ?? umkm.longitude;
+    const setsOne = dto.latitude !== undefined || dto.longitude !== undefined;
+
+    if (setsOne && (nextLat === null || nextLng === null)) {
+      throw new BadRequestException(
+        'Latitude dan longitude harus diisi berpasangan.',
+      );
+    }
+
+    return this.prisma.uMKM.update({
+      where: { id },
+      data: {
+        ...(dto.latitude !== undefined ? { latitude: dto.latitude } : {}),
+        ...(dto.longitude !== undefined ? { longitude: dto.longitude } : {}),
+        ...(dto.category !== undefined ? { category: dto.category } : {}),
+        ...(dto.photoUrl !== undefined ? { photoUrl: dto.photoUrl } : {}),
+        ...(dto.operatingHours !== undefined
+          ? { operatingHours: dto.operatingHours as any }
+          : {}),
+        ...(dto.kopdesId !== undefined ? { kopdesId: dto.kopdesId } : {}),
+      },
+      select: {
+        id: true,
+        businessName: true,
+        latitude: true,
+        longitude: true,
+        category: true,
+        photoUrl: true,
+        operatingHours: true,
+        kopdesId: true,
+      },
+    });
   }
 }

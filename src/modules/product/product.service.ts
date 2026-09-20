@@ -1,10 +1,21 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { CacheService } from '../../cache/cache.service';
 import { StorageService } from '../../storage/storage.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductQueryDto } from './dto/product-query.dto';
+
+/** Staf yang melakukan perubahan — sumber kopdesId dan jejak audit. */
+export interface ProductActor {
+  id: string;
+  kopdesId: string | null;
+}
 
 @Injectable()
 export class ProductService {
@@ -174,14 +185,70 @@ export class ProductService {
     return mappedProduct;
   }
 
-  async create(dto: CreateProductDto, files?: any[]) {
+  /**
+   * Menolak harga diskon yang tidak masuk akal.
+   *
+   * class-validator hanya melihat satu field, jadi perbandingan antar-field
+   * dikerjakan di sini — bukan diserahkan ke form Flutter, yang bisa dilewati
+   * begitu request dikirim langsung ke API.
+   */
+  private assertPricing(price?: number, discountPrice?: number) {
+    if (discountPrice == null) return;
+    if (price == null) {
+      throw new BadRequestException(
+        'Harga diskon hanya bisa diisi bersama harga normal',
+      );
+    }
+    if (discountPrice >= price) {
+      throw new BadRequestException(
+        'Harga diskon harus lebih kecil dari harga normal',
+      );
+    }
+  }
+
+  /**
+   * Memastikan staf desa hanya menyentuh barang Kopdes tempatnya bertugas.
+   * `kopdesId` null berarti Super Admin — memang lintas desa.
+   */
+  private async assertOwnership(productId: string, kopdesId: string | null) {
+    if (!kopdesId) return;
+    const owned = await this.prisma.product.findFirst({
+      where: { id: productId, kopdesId },
+      select: { id: true },
+    });
+    if (!owned) {
+      throw new ForbiddenException(
+        'Barang ini bukan milik Kopdes tempat Anda bertugas',
+      );
+    }
+  }
+
+  private async writeAudit(
+    actorId: string | undefined,
+    action: string,
+    details: unknown,
+  ) {
+    if (!actorId) return;
+    // Audit tidak boleh menjatuhkan operasi yang sudah berhasil.
+    await this.prisma.auditLog
+      .create({
+        data: { userId: actorId, action, details: JSON.stringify(details) },
+      })
+      .catch(() => undefined);
+  }
+
+  async create(dto: CreateProductDto, files?: any[], actor?: ProductActor) {
     // Verify category
     const category = await this.prisma.category.findUnique({
       where: { id: dto.categoryId },
     });
     if (!category) {
-      throw new BadRequestException(`Category with ID ${dto.categoryId} not found`);
+      throw new BadRequestException(
+        `Category with ID ${dto.categoryId} not found`,
+      );
     }
+
+    this.assertPricing(dto.price, dto.discountPrice);
 
     // Create product
     const product = await this.prisma.product.create({
@@ -189,9 +256,30 @@ export class ProductService {
         name: dto.name,
         description: dto.description,
         price: dto.price,
+        discountPrice: dto.discountPrice ?? null,
         stock: dto.stock,
+        minStock: dto.minStock ?? 5,
+        unit: dto.unit?.trim() || 'pcs',
+        sku: dto.sku?.trim() || null,
         categoryId: dto.categoryId,
-        isActive: true,
+        // Barang selalu lahir di Kopdes pembuatnya. Tanpa ini produk pegawai
+        // tidak akan pernah masuk hitungan dashboard desanya sendiri.
+        kopdesId: actor?.kopdesId ?? null,
+        isPreOrderAllowed: dto.isPreOrderAllowed ?? false,
+        preOrderAvailableAt: dto.preOrderAvailableAt
+          ? new Date(dto.preOrderAvailableAt)
+          : null,
+        isActive: dto.isActive ?? true,
+      },
+    });
+
+    await this.writeAudit(actor?.id, 'PRODUCT_CREATE', {
+      productId: product.id,
+      kopdesId: product.kopdesId,
+      after: {
+        name: product.name,
+        price: product.price.toString(),
+        stock: product.stock,
       },
     });
 
@@ -200,7 +288,10 @@ export class ProductService {
       const imagesData = [];
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        const objectKey = await this.storageService.uploadFile(file, 'products');
+        const objectKey = await this.storageService.uploadFile(
+          file,
+          'products',
+        );
         const url = await this.storageService.getPublicUrl(objectKey);
         imagesData.push({
           productId: product.id,
@@ -220,8 +311,18 @@ export class ProductService {
     return this.findOne(product.id);
   }
 
-  async update(id: string, dto: UpdateProductDto, files?: any[]) {
+  async update(
+    id: string,
+    dto: UpdateProductDto,
+    files?: any[],
+    actor?: ProductActor,
+  ) {
     const existingProduct = await this.findOne(id);
+    await this.assertOwnership(id, actor?.kopdesId ?? null);
+    this.assertPricing(
+      dto.price ?? Number(existingProduct.price),
+      dto.discountPrice,
+    );
 
     // Verify category if changed
     if (dto.categoryId && dto.categoryId !== existingProduct.categoryId) {
@@ -229,7 +330,9 @@ export class ProductService {
         where: { id: dto.categoryId },
       });
       if (!category) {
-        throw new BadRequestException(`Category with ID ${dto.categoryId} not found`);
+        throw new BadRequestException(
+          `Category with ID ${dto.categoryId} not found`,
+        );
       }
     }
 
@@ -243,7 +346,10 @@ export class ProductService {
       const imagesData = [];
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        const objectKey = await this.storageService.uploadFile(file, 'products');
+        const objectKey = await this.storageService.uploadFile(
+          file,
+          'products',
+        );
         const url = await this.storageService.getPublicUrl(objectKey);
         imagesData.push({
           productId: id,
@@ -264,9 +370,31 @@ export class ProductService {
         name: dto.name,
         description: dto.description,
         price: dto.price,
+        discountPrice: dto.discountPrice,
         stock: dto.stock,
+        minStock: dto.minStock,
+        unit: dto.unit?.trim() || undefined,
+        sku: dto.sku?.trim() || undefined,
         categoryId: dto.categoryId,
+        isPreOrderAllowed: dto.isPreOrderAllowed,
+        preOrderAvailableAt: dto.preOrderAvailableAt
+          ? new Date(dto.preOrderAvailableAt)
+          : undefined,
         isActive: dto.isActive,
+      },
+    });
+
+    await this.writeAudit(actor?.id, 'PRODUCT_UPDATE', {
+      productId: id,
+      before: {
+        name: existingProduct.name,
+        price: existingProduct.price.toString(),
+        stock: existingProduct.stock,
+      },
+      after: {
+        name: updated.name,
+        price: updated.price.toString(),
+        stock: updated.stock,
       },
     });
 
@@ -276,14 +404,17 @@ export class ProductService {
     return this.findOne(id);
   }
 
-  async remove(id: string) {
+  async remove(id: string, actor?: ProductActor) {
     await this.findOne(id); // throws NotFoundException if not found
+    await this.assertOwnership(id, actor?.kopdesId ?? null);
 
     // Soft delete
     await this.prisma.product.update({
       where: { id },
       data: { isActive: false },
     });
+
+    await this.writeAudit(actor?.id, 'PRODUCT_DEACTIVATE', { productId: id });
 
     // Invalidate product caches
     await this.invalidateCache();

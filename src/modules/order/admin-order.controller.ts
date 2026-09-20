@@ -1,8 +1,11 @@
 import {
   Controller,
+  DefaultValuePipe,
+  ForbiddenException,
   Get,
   Patch,
   Param,
+  ParseIntPipe,
   Query,
   Body,
   Req,
@@ -11,36 +14,76 @@ import {
 import { OrderService } from './order.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import type { AuthenticatedRequest } from '../auth/authenticated-request';
+import { RequirePermissions } from '../auth/decorators/permissions.decorator';
+import { Permission } from '../../common/permissions';
 import { Role, OrderStatus } from '@prisma/client';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 
-// Pengelolaan pesanan sisi Admin Kopdes.
+// Pengelolaan pesanan sisi staf Kopdes (Admin & Pegawai).
 @Controller('admin/orders')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
 @Roles(Role.ADMIN_KOPDES, Role.PEGAWAI_KOPDES, Role.SUPER_ADMIN)
 export class AdminOrderController {
   constructor(private readonly orderService: OrderService) {}
 
   @Get()
-  async list(@Query('status') status?: OrderStatus) {
-    const data = await this.orderService.listAllForAdmin(status);
-    return { success: true, data };
+  @RequirePermissions(Permission.ORDER_READ)
+  async list(
+    @Req() req: AuthenticatedRequest,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    @Query('status') status?: OrderStatus,
+  ) {
+    const { orders, meta } = await this.orderService.listAllForAdmin(
+      status,
+      req.user.kopdesId ?? null,
+      page,
+      limit,
+    );
+    return { success: true, data: orders, meta };
   }
 
   @Get(':id')
-  async detail(@Req() req: any, @Param('id') id: string) {
-    const data = await this.orderService.getOrderDetail(req.user.id, id, req.user.role);
+  @RequirePermissions(Permission.ORDER_READ)
+  async detail(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    const data = await this.orderService.getOrderDetail(
+      req.user.id,
+      id,
+      req.user.role,
+      req.user.kopdesId ?? null,
+    );
     return { success: true, data };
   }
 
   @Patch(':id/status')
+  @RequirePermissions(Permission.ORDER_PROCESS)
   async updateStatus(
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
     @Param('id') id: string,
     @Body() dto: UpdateOrderStatusDto,
   ) {
-    const data = await this.orderService.updateStatus(req.user.id, id, dto.status, req.user.role);
+    // Membatalkan pesanan yang sudah dibayar adalah keputusan uang, bukan
+    // pekerjaan meja: pegawai memindahkan pesanan maju, admin yang
+    // membatalkannya. Dicek di sini, bukan hanya dengan menyembunyikan tombol.
+    if (
+      dto.status === 'CANCELLED' &&
+      !req.user.permissions?.includes(Permission.ORDER_CANCEL)
+    ) {
+      throw new ForbiddenException(
+        'Pembatalan pesanan hanya dapat dilakukan Admin Kopdes',
+      );
+    }
+
+    const data = await this.orderService.updateStatus(
+      req.user.id,
+      id,
+      dto.status,
+      req.user.role,
+      req.user.kopdesId ?? null,
+    );
     return { success: true, data };
   }
 }

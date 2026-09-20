@@ -12,6 +12,9 @@ import { ProductModule } from './modules/product/product.module';
 import { OrderModule } from './modules/order/order.module';
 import { CartModule } from './modules/cart/cart.module';
 import { DeliveryModule } from './modules/delivery/delivery.module';
+import { ContentModule } from './modules/content/content.module';
+import { DiscoveryModule } from './modules/discovery/discovery.module';
+import { KoperasiModule } from './modules/koperasi/koperasi.module';
 import { UMKMModule } from './modules/umkm/umkm.module';
 import { AIModule } from './modules/ai/ai.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
@@ -22,6 +25,8 @@ import { SellerModule } from './modules/seller/seller.module';
 import { ChatModule } from './modules/chat/chat.module';
 import { SuperAdminModule } from './modules/superadmin/superadmin.module';
 import { AddressModule } from './modules/address/address.module';
+import { StaffModule } from './modules/staff/staff.module';
+import { ReviewModule } from './modules/review/review.module';
 
 @Module({
   imports: [
@@ -39,6 +44,9 @@ import { AddressModule } from './modules/address/address.module';
     CartModule,
     DeliveryModule,
     UMKMModule,
+    KoperasiModule,
+    DiscoveryModule,
+    ContentModule,
     SellerModule,
     AIModule,
     InventoryModule,
@@ -48,9 +56,10 @@ import { AddressModule } from './modules/address/address.module';
     ChatModule,
     SuperAdminModule,
     AddressModule,
+    StaffModule,
+    ReviewModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
 export class AppModule {}
-

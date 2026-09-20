@@ -1,10 +1,26 @@
-import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { CacheService } from '../../cache/cache.service';
 import { AddressService } from '../address/address.service';
 import { CheckoutDto } from './dto/checkout.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
-import { OrderStatus, PaymentMethod, PaymentStatus, Prisma } from '@prisma/client';
+import {
+  OrderStatus,
+  PaymentMethod,
+  PaymentStatus,
+  Prisma,
+} from '@prisma/client';
+import { ALLOWED_ORDER_TRANSITIONS, canTransition } from './order-transitions';
+import {
+  composeOrderTotals,
+  resolveDiscount,
+  resolveShippingFee,
+} from './order-money';
 
 @Injectable()
 export class OrderService {
@@ -25,8 +41,21 @@ export class OrderService {
     private readonly addressService: AddressService,
   ) {}
 
-  private getHistoryCacheKey(userId: string): string {
-    return `${this.historyCachePrefix}${userId}`;
+  /// Kunci riwayat kini memuat halaman: satu kunci untuk seluruh riwayat
+  /// berarti halaman 2 menimpa halaman 1 di cache yang sama.
+  private getHistoryCacheKey(userId: string, page: number, limit: number) {
+    return `${this.historyCachePrefix}${userId}:p${page}:l${limit}`;
+  }
+
+  /// Seluruh halaman riwayat satu pemesan sekaligus.
+  ///
+  /// Dipakai setiap kali riwayatnya berubah — pesanan baru, status bergerak,
+  /// penerimaan dikonfirmasi. Membuang satu kunci saja akan menyisakan
+  /// halaman lain yang masih memuat pesanan dengan status lama.
+  private async invalidateHistory(userId: string): Promise<void> {
+    await this.cache.deletePattern(`${this.historyCachePrefix}${userId}:*`);
+    // Kunci lama (tanpa nomor halaman) dari versi sebelum paginasi.
+    await this.cache.delete(`${this.historyCachePrefix}${userId}`);
   }
 
   private getDetailCacheKey(orderId: string): string {
@@ -51,6 +80,17 @@ export class OrderService {
       throw new BadRequestException('Shopping cart is empty');
     }
 
+    // Pemesan boleh mencentang sebagian keranjang. Tanpa daftar ini seluruh
+    // keranjang ikut dipesan, seperti perilaku sebelumnya.
+    const selectedIds = dto.cartItemIds ? new Set(dto.cartItemIds) : null;
+    const checkoutItems = selectedIds
+      ? cart.items.filter((item) => selectedIds.has(item.id))
+      : cart.items;
+
+    if (checkoutItems.length === 0) {
+      throw new BadRequestException('Tidak ada produk keranjang yang dipilih');
+    }
+
     // Alamat utama profil, alamat tersimpan pilihan pemesan, atau alamat baru
     // yang diketik saat checkout — semuanya diputuskan di satu tempat.
     const address = await this.addressService.resolveForOrder(userId, dto);
@@ -60,19 +100,23 @@ export class OrderService {
       let totalAmount = new Prisma.Decimal(0);
       const orderItemsData = [];
 
-      for (const item of cart.items) {
+      for (const item of checkoutItems) {
         if (item.productId) {
           const product = await tx.product.findUnique({
             where: { id: item.productId },
           });
 
           if (!product || !product.isActive) {
-            throw new BadRequestException(`Product "${product?.name || item.productId}" is not available`);
+            throw new BadRequestException(
+              `Product "${product?.name || item.productId}" is not available`,
+            );
           }
 
           if (product.stock < item.quantity) {
             if (!product.isPreOrderAllowed) {
-              throw new BadRequestException(`Stok "${product.name}" tidak mencukupi (${product.stock} tersisa) dan produk tidak membuka pre-order`);
+              throw new BadRequestException(
+                `Stok "${product.name}" tidak mencukupi (${product.stock} tersisa) dan produk tidak membuka pre-order`,
+              );
             }
           }
 
@@ -90,11 +134,16 @@ export class OrderService {
               type: 'OUT',
               quantity: item.quantity,
               stockAfter: newStock,
-              reason: product.stock < item.quantity ? `Pre-Order Checkout` : `Checkout Order`,
+              reason:
+                product.stock < item.quantity
+                  ? `Pre-Order Checkout`
+                  : `Checkout Order`,
             },
           });
 
-          const itemTotal = new Prisma.Decimal(product.price).mul(item.quantity);
+          const itemTotal = new Prisma.Decimal(product.price).mul(
+            item.quantity,
+          );
           totalAmount = totalAmount.add(itemTotal);
 
           orderItemsData.push({
@@ -107,12 +156,20 @@ export class OrderService {
             where: { id: item.umkmProductId },
           });
 
-          if (!umkmProduct || !umkmProduct.isActive || !umkmProduct.isApproved) {
-            throw new BadRequestException(`UMKM Product "${umkmProduct?.name || item.umkmProductId}" is not available`);
+          if (
+            !umkmProduct ||
+            !umkmProduct.isActive ||
+            !umkmProduct.isApproved
+          ) {
+            throw new BadRequestException(
+              `UMKM Product "${umkmProduct?.name || item.umkmProductId}" is not available`,
+            );
           }
 
           if (umkmProduct.stock < item.quantity) {
-            throw new BadRequestException(`Insufficient stock for "${umkmProduct.name}". Available: ${umkmProduct.stock}`);
+            throw new BadRequestException(
+              `Insufficient stock for "${umkmProduct.name}". Available: ${umkmProduct.stock}`,
+            );
           }
 
           // Decrement stock
@@ -132,7 +189,9 @@ export class OrderService {
             },
           });
 
-          const itemTotal = new Prisma.Decimal(umkmProduct.price).mul(item.quantity);
+          const itemTotal = new Prisma.Decimal(umkmProduct.price).mul(
+            item.quantity,
+          );
           totalAmount = totalAmount.add(itemTotal);
 
           orderItemsData.push({
@@ -143,11 +202,21 @@ export class OrderService {
         }
       }
 
+      // Komponen uang disusun lewat satu rumus bersama, bukan dihitung
+      // sendiri per jalur pembuatan pesanan.
+      const totals = composeOrderTotals(totalAmount, {
+        shippingFee: resolveShippingFee(),
+        discountAmount: resolveDiscount(),
+      });
+
       // Create Order
       const newOrder = await tx.order.create({
         data: {
           customerId: userId,
-          totalAmount,
+          subtotal: totals.subtotal,
+          shippingFee: totals.shippingFee,
+          discountAmount: totals.discountAmount,
+          totalAmount: totals.totalAmount,
           status: 'PENDING',
           paymentMethod: dto.paymentMethod,
           paymentStatus: 'PENDING',
@@ -160,10 +229,18 @@ export class OrderService {
           items: {
             include: {
               product: {
-                include: { images: true },
+                include: {
+                  images: true,
+                  kopdes: { select: { id: true, name: true } },
+                },
               },
               umkmProduct: {
-                include: { images: true },
+                include: {
+                  images: true,
+                  umkm: {
+                    select: { id: true, businessName: true, status: true },
+                  },
+                },
               },
             },
           },
@@ -171,13 +248,17 @@ export class OrderService {
       });
 
       // Create Payment
-      const mockQrisCode = dto.paymentMethod === 'QRIS' ? 'mock-qris-data-string' : null;
+      const mockQrisCode =
+        dto.paymentMethod === 'QRIS' ? 'mock-qris-data-string' : null;
       await tx.payment.create({
         data: {
           orderId: newOrder.id,
           method: dto.paymentMethod,
           status: 'PENDING',
-          amount: totalAmount,
+          // Yang ditagihkan total akhir, bukan nilai barangnya: pembayaran
+          // yang memakai subtotal akan selalu kurang bayar begitu ongkir
+          // mulai dibebankan.
+          amount: totals.totalAmount,
           qrisCode: mockQrisCode,
         },
       });
@@ -194,9 +275,10 @@ export class OrderService {
         },
       });
 
-      // Clear Cart Items
+      // Hanya item yang benar-benar dipesan yang dikeluarkan dari keranjang;
+      // sisanya tetap menunggu di sana untuk pesanan berikutnya.
       await tx.cartItem.deleteMany({
-        where: { cartId: cart.id },
+        where: { id: { in: checkoutItems.map((item) => item.id) } },
       });
 
       return newOrder;
@@ -205,7 +287,7 @@ export class OrderService {
     // Invalidate Cart Cache
     await this.cache.delete(`cart:active:${userId}`);
     // Invalidate History Cache
-    await this.cache.delete(this.getHistoryCacheKey(userId));
+    await this.invalidateHistory(userId);
 
     // Audit Log
     await this.prisma.auditLog.create({
@@ -243,7 +325,9 @@ export class OrderService {
           }
 
           if (product.stock < item.quantity) {
-            throw new BadRequestException(`Insufficient stock for "${product.name}". Available: ${product.stock}`);
+            throw new BadRequestException(
+              `Insufficient stock for "${product.name}". Available: ${product.stock}`,
+            );
           }
 
           const productNewStock = product.stock - item.quantity;
@@ -262,7 +346,9 @@ export class OrderService {
             },
           });
 
-          const itemTotal = new Prisma.Decimal(product.price).mul(item.quantity);
+          const itemTotal = new Prisma.Decimal(product.price).mul(
+            item.quantity,
+          );
           totalAmount = totalAmount.add(itemTotal);
 
           orderItemsData.push({
@@ -275,12 +361,18 @@ export class OrderService {
             where: { id: item.umkmProductId },
           });
 
-          if (!umkmProduct || !umkmProduct.isActive || !umkmProduct.isApproved) {
+          if (
+            !umkmProduct ||
+            !umkmProduct.isActive ||
+            !umkmProduct.isApproved
+          ) {
             throw new BadRequestException(`UMKM Product is not available`);
           }
 
           if (umkmProduct.stock < item.quantity) {
-            throw new BadRequestException(`Insufficient stock for "${umkmProduct.name}". Available: ${umkmProduct.stock}`);
+            throw new BadRequestException(
+              `Insufficient stock for "${umkmProduct.name}". Available: ${umkmProduct.stock}`,
+            );
           }
 
           const umkmNewStock = umkmProduct.stock - item.quantity;
@@ -299,7 +391,9 @@ export class OrderService {
             },
           });
 
-          const itemTotal = new Prisma.Decimal(umkmProduct.price).mul(item.quantity);
+          const itemTotal = new Prisma.Decimal(umkmProduct.price).mul(
+            item.quantity,
+          );
           totalAmount = totalAmount.add(itemTotal);
 
           orderItemsData.push({
@@ -308,14 +402,26 @@ export class OrderService {
             price: umkmProduct.price,
           });
         } else {
-          throw new BadRequestException('Either productId or umkmProductId must be provided for order items');
+          throw new BadRequestException(
+            'Either productId or umkmProductId must be provided for order items',
+          );
         }
       }
+
+      // Komponen uang disusun lewat satu rumus bersama, bukan dihitung
+      // sendiri per jalur pembuatan pesanan.
+      const totals = composeOrderTotals(totalAmount, {
+        shippingFee: resolveShippingFee(),
+        discountAmount: resolveDiscount(),
+      });
 
       const newOrder = await tx.order.create({
         data: {
           customerId: userId,
-          totalAmount,
+          subtotal: totals.subtotal,
+          shippingFee: totals.shippingFee,
+          discountAmount: totals.discountAmount,
+          totalAmount: totals.totalAmount,
           status: 'PENDING',
           paymentMethod: dto.paymentMethod,
           paymentStatus: 'PENDING',
@@ -328,10 +434,18 @@ export class OrderService {
           items: {
             include: {
               product: {
-                include: { images: true },
+                include: {
+                  images: true,
+                  kopdes: { select: { id: true, name: true } },
+                },
               },
               umkmProduct: {
-                include: { images: true },
+                include: {
+                  images: true,
+                  umkm: {
+                    select: { id: true, businessName: true, status: true },
+                  },
+                },
               },
             },
           },
@@ -339,13 +453,17 @@ export class OrderService {
       });
 
       // Create Payment
-      const mockQrisCode = dto.paymentMethod === 'QRIS' ? 'mock-qris-data-string' : null;
+      const mockQrisCode =
+        dto.paymentMethod === 'QRIS' ? 'mock-qris-data-string' : null;
       await tx.payment.create({
         data: {
           orderId: newOrder.id,
           method: dto.paymentMethod,
           status: 'PENDING',
-          amount: totalAmount,
+          // Yang ditagihkan total akhir, bukan nilai barangnya: pembayaran
+          // yang memakai subtotal akan selalu kurang bayar begitu ongkir
+          // mulai dibebankan.
+          amount: totals.totalAmount,
           qrisCode: mockQrisCode,
         },
       });
@@ -365,7 +483,7 @@ export class OrderService {
       return newOrder;
     });
 
-    await this.cache.delete(this.getHistoryCacheKey(userId));
+    await this.invalidateHistory(userId);
 
     await this.prisma.auditLog.create({
       data: {
@@ -378,20 +496,49 @@ export class OrderService {
     return order;
   }
 
-  async getOrderHistory(userId: string) {
-    const cacheKey = this.getHistoryCacheKey(userId);
-    const cached = await this.cache.get<any[]>(cacheKey);
+  /**
+   * Riwayat pesanan satu pemesan, berhalaman.
+   *
+   * Sebelumnya seluruh riwayat dikirim sekali jalan dan di-cache utuh; pada
+   * akun yang sudah lama berbelanja itu berarti satu respons yang terus
+   * tumbuh dan tidak pernah dipakai seluruhnya oleh layar mana pun.
+   */
+  async getOrderHistory(userId: string, page = 1, limit = 10) {
+    const take = Math.min(Math.max(limit, 1), 50);
+    const current = Math.max(page, 1);
+    const skip = (current - 1) * take;
+
+    const cacheKey = this.getHistoryCacheKey(userId, current, take);
+    const cached = await this.cache.get<{ orders: any[]; meta: any }>(cacheKey);
     if (cached) {
       return cached;
     }
 
+    const total = await this.prisma.order.count({
+      where: { customerId: userId },
+    });
+
     const orders = await this.prisma.order.findMany({
+      skip,
+      take,
       where: { customerId: userId },
       include: {
         items: {
           include: {
-            product: { include: { images: true } },
-            umkmProduct: { include: { images: true } },
+            product: {
+              include: {
+                images: true,
+                kopdes: { select: { id: true, name: true } },
+              },
+            },
+            umkmProduct: {
+              include: {
+                images: true,
+                umkm: {
+                  select: { id: true, businessName: true, status: true },
+                },
+              },
+            },
           },
         },
         invoice: true,
@@ -400,38 +547,112 @@ export class OrderService {
       orderBy: { createdAt: 'desc' },
     });
 
-    await this.cache.set(cacheKey, orders, this.cacheTtl);
-    return orders;
+    const payload = {
+      orders,
+      meta: {
+        total,
+        page: current,
+        limit: take,
+        totalPages: Math.max(1, Math.ceil(total / take)),
+      },
+    };
+
+    await this.cache.set(cacheKey, payload, this.cacheTtl);
+    return payload;
   }
 
   // Admin Kopdes: seluruh pesanan koperasi, opsional difilter status.
-  async listAllForAdmin(status?: OrderStatus) {
-    const where: any = {};
-    if (status) where.status = status;
-
-    return this.prisma.order.findMany({
-      where,
-      include: {
-        items: {
-          include: {
-            product: { include: { images: true } },
-            umkmProduct: { include: { images: true } },
-          },
+  /**
+   * Filter kepemilikan Kopdes untuk sebuah pesanan.
+   *
+   * `Order` tidak menyimpan kopdesId sendiri, jadi ditelusuri lewat barisnya:
+   * produk Kopdes langsung, atau produk mitra yang bernaung di Kopdes itu.
+   * `null` (Super Admin) berarti tanpa penyaringan.
+   */
+  static kopdesScope(kopdesId: string | null): Prisma.OrderWhereInput {
+    if (!kopdesId) return {};
+    return {
+      items: {
+        some: {
+          OR: [
+            { product: { kopdesId } },
+            { umkmProduct: { umkm: { kopdesId } } },
+          ],
         },
-        payment: true,
-        delivery: {
-          include: {
-            courier: { select: { id: true, name: true, phone: true } },
-          },
-        },
-        customer: { select: { id: true, name: true, email: true, phone: true } },
-        deliveryAddress: true,
       },
-      orderBy: { createdAt: 'desc' },
-    });
+    };
   }
 
-  async getOrderDetail(userId: string, orderId: string, role: string) {
+  async listAllForAdmin(
+    status: OrderStatus | undefined,
+    kopdesId: string | null,
+    page = 1,
+    limit = 20,
+  ) {
+    const take = Math.min(Math.max(limit, 1), 100);
+    const skip = (Math.max(page, 1) - 1) * take;
+    const where: Prisma.OrderWhereInput = {
+      ...OrderService.kopdesScope(kopdesId),
+      ...(status ? { status } : {}),
+    };
+
+    const [orders, total] = await this.prisma.$transaction([
+      this.prisma.order.findMany({
+        where,
+        skip,
+        take,
+        include: {
+          items: {
+            include: {
+              product: {
+                include: {
+                  images: true,
+                  kopdes: { select: { id: true, name: true } },
+                },
+              },
+              umkmProduct: {
+                include: {
+                  images: true,
+                  umkm: {
+                    select: { id: true, businessName: true, status: true },
+                  },
+                },
+              },
+            },
+          },
+          payment: true,
+          delivery: {
+            include: {
+              courier: { select: { id: true, name: true, phone: true } },
+            },
+          },
+          customer: {
+            select: { id: true, name: true, email: true, phone: true },
+          },
+          deliveryAddress: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.order.count({ where }),
+    ]);
+
+    return {
+      orders,
+      meta: {
+        total,
+        page: Math.max(page, 1),
+        limit: take,
+        totalPages: Math.max(1, Math.ceil(total / take)),
+      },
+    };
+  }
+
+  async getOrderDetail(
+    userId: string,
+    orderId: string,
+    role: string,
+    kopdesId: string | null = null,
+  ) {
     const cacheKey = this.getDetailCacheKey(orderId);
     const cached = await this.cache.get<any>(cacheKey);
 
@@ -442,8 +663,20 @@ export class OrderService {
         include: {
           items: {
             include: {
-              product: { include: { images: true } },
-              umkmProduct: { include: { images: true } },
+              product: {
+                include: {
+                  images: true,
+                  kopdes: { select: { id: true, name: true } },
+                },
+              },
+              umkmProduct: {
+                include: {
+                  images: true,
+                  umkm: {
+                    select: { id: true, businessName: true, status: true },
+                  },
+                },
+              },
             },
           },
           payment: true,
@@ -469,8 +702,29 @@ export class OrderService {
     }
 
     // Authorization check
-    if (!OrderService.STAFF_ROLES.includes(role) && role !== 'COURIER' && order.customerId !== userId) {
-      throw new ForbiddenException('You do not have permission to view this order');
+    if (
+      !OrderService.STAFF_ROLES.includes(role) &&
+      role !== 'COURIER' &&
+      order.customerId !== userId
+    ) {
+      throw new ForbiddenException(
+        'You do not have permission to view this order',
+      );
+    }
+
+    // Staf desa tidak boleh membuka pesanan Kopdes lain. Dicek terhadap
+    // database dan bukan terhadap objek cache, supaya baris yang sudah
+    // tersimpan di Redis tidak menjadi celah baca lintas desa.
+    if (OrderService.STAFF_ROLES.includes(role) && kopdesId) {
+      const owned = await this.prisma.order.findFirst({
+        where: { id: orderId, ...OrderService.kopdesScope(kopdesId) },
+        select: { id: true },
+      });
+      if (!owned) {
+        throw new ForbiddenException(
+          'Pesanan ini bukan milik Kopdes tempat Anda bertugas',
+        );
+      }
     }
 
     return order;
@@ -481,6 +735,8 @@ export class OrderService {
     orderId: string,
     status: OrderStatus,
     role: string,
+    /** Kopdes penugasan staf. `null` = Super Admin, tanpa batas desa. */
+    kopdesId: string | null = null,
   ) {
     // 1. Get current order details
     const order = await this.prisma.order.findUnique({
@@ -507,9 +763,35 @@ export class OrderService {
       }
     }
 
+    // 2b. Staf desa hanya boleh menyentuh pesanan Kopdes tempatnya bertugas.
+    // Dicek dengan query terpisah agar filter kepemilikan tetap dievaluasi
+    // database, bukan disimpulkan dari relasi yang kebetulan ikut ter-include.
+    if (OrderService.STAFF_ROLES.includes(role) && kopdesId) {
+      const owned = await this.prisma.order.findFirst({
+        where: { id: orderId, ...OrderService.kopdesScope(kopdesId) },
+        select: { id: true },
+      });
+      if (!owned) {
+        throw new ForbiddenException(
+          'Pesanan ini bukan milik Kopdes tempat Anda bertugas',
+        );
+      }
+    }
+
     const oldStatus = order.status;
     if (oldStatus === status) {
       return order;
+    }
+
+    // 2c. Status tidak boleh melompat. Pelanggan yang membatalkan pesanannya
+    // sendiri sudah dibatasi di atas, jadi peta ini berlaku untuk semua.
+    if (!canTransition(oldStatus, status)) {
+      const allowed = ALLOWED_ORDER_TRANSITIONS[oldStatus];
+      throw new BadRequestException(
+        allowed.length === 0
+          ? `Pesanan berstatus ${oldStatus} sudah final dan tidak bisa diubah`
+          : `Status ${oldStatus} hanya bisa berpindah ke: ${allowed.join(', ')}`,
+      );
     }
 
     // 2. Perform updates inside transaction
@@ -528,13 +810,27 @@ export class OrderService {
         where: { id: orderId },
         data: {
           status,
-          ...(paymentStatusUpdate ? { paymentStatus: paymentStatusUpdate } : {}),
+          ...(paymentStatusUpdate
+            ? { paymentStatus: paymentStatusUpdate }
+            : {}),
         },
         include: {
           items: {
             include: {
-              product: { include: { images: true } },
-              umkmProduct: { include: { images: true } },
+              product: {
+                include: {
+                  images: true,
+                  kopdes: { select: { id: true, name: true } },
+                },
+              },
+              umkmProduct: {
+                include: {
+                  images: true,
+                  umkm: {
+                    select: { id: true, businessName: true, status: true },
+                  },
+                },
+              },
             },
           },
           payment: true,
@@ -594,7 +890,7 @@ export class OrderService {
 
     // Invalidate Caches
     await this.cache.delete(this.getDetailCacheKey(orderId));
-    await this.cache.delete(this.getHistoryCacheKey(order.customerId));
+    await this.invalidateHistory(order.customerId);
 
     // Audit Log
     await this.prisma.auditLog.create({
@@ -659,7 +955,8 @@ export class OrderService {
         where: { id: orderId },
         data: {
           status: 'COMPLETED',
-          paymentStatus: order.paymentMethod === 'COD' ? 'PAID' : order.paymentStatus,
+          paymentStatus:
+            order.paymentMethod === 'COD' ? 'PAID' : order.paymentStatus,
         },
         include: {
           items: true,
@@ -690,9 +987,8 @@ export class OrderService {
 
     // Invalidate Caches
     await this.cache.delete(this.getDetailCacheKey(orderId));
-    await this.cache.delete(this.getHistoryCacheKey(userId));
+    await this.invalidateHistory(userId);
 
     return updatedOrder;
   }
 }
-

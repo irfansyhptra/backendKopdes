@@ -1,10 +1,17 @@
-import { Injectable, UnauthorizedException, ConflictException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  ConflictException,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { Role } from '@prisma/client';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { JwtHelper, PasswordHelper } from './helpers/crypto.helper';
+import { resolvePermissions } from '../../common/permissions';
 
 // Pendaftaran mandiri hanya untuk peran publik. Akun staf Kopdes
 // (ADMIN_KOPDES, PEGAWAI_KOPDES) & SUPER_ADMIN dibuat oleh Super Admin.
@@ -22,11 +29,13 @@ export class AuthService {
   ) {
     this.jwtSecret =
       this.configService.get<string>('JWT_SECRET') || 'default_jwt_secret';
-    
+
     // Parse duration like "15m" or "7d"
-    const accessExpires = this.configService.get<string>('JWT_EXPIRES_IN') || '15m';
-    const refreshExpires = this.configService.get<string>('REFRESH_TOKEN_EXPIRES_IN') || '7d';
-    
+    const accessExpires =
+      this.configService.get<string>('JWT_EXPIRES_IN') || '15m';
+    const refreshExpires =
+      this.configService.get<string>('REFRESH_TOKEN_EXPIRES_IN') || '7d';
+
     this.jwtExpiresIn = this.parseDuration(accessExpires, 900); // default 15m
     this.refreshExpiresIn = this.parseDuration(refreshExpires, 604800); // default 7d
   }
@@ -37,11 +46,16 @@ export class AuthService {
     const value = parseInt(match[1], 10);
     const unit = match[2];
     switch (unit) {
-      case 's': return value;
-      case 'm': return value * 60;
-      case 'h': return value * 3600;
-      case 'd': return value * 86400;
-      default: return fallback;
+      case 's':
+        return value;
+      case 'm':
+        return value * 60;
+      case 'h':
+        return value * 3600;
+      case 'd':
+        return value * 86400;
+      default:
+        return fallback;
     }
   }
 
@@ -111,7 +125,9 @@ export class AuthService {
 
     if (!storedToken || storedToken.expiresAt < new Date()) {
       if (storedToken) {
-        await this.prisma.refreshToken.delete({ where: { id: storedToken.id } });
+        await this.prisma.refreshToken.delete({
+          where: { id: storedToken.id },
+        });
       }
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
@@ -130,6 +146,9 @@ export class AuthService {
         name: true,
         phone: true,
         role: true,
+        kopdesId: true,
+        permissions: true,
+        kopdes: { select: { id: true, name: true, village: true } },
         createdAt: true,
         updatedAt: true,
       },
@@ -139,7 +158,13 @@ export class AuthService {
       throw new NotFoundException('User not found');
     }
 
-    return user;
+    const { permissions, ...rest } = user;
+    return {
+      ...rest,
+      // Permission efektif, bukan isi kolom mentah: kolom kosong berarti
+      // "pakai bawaan role", dan klien tidak boleh menerjemahkan itu sendiri.
+      permissions: resolvePermissions(user.role, permissions),
+    };
   }
 
   async updateProfile(userId: string, data: { name: string; phone?: string }) {
@@ -169,7 +194,11 @@ export class AuthService {
       role: user.role,
     };
 
-    const accessToken = JwtHelper.sign(payload, this.jwtSecret, this.jwtExpiresIn);
+    const accessToken = JwtHelper.sign(
+      payload,
+      this.jwtSecret,
+      this.jwtExpiresIn,
+    );
     const refreshToken = crypto.randomUUID
       ? crypto.randomUUID()
       : require('crypto').randomBytes(32).toString('hex');
@@ -186,6 +215,13 @@ export class AuthService {
       },
     });
 
+    const kopdes = user.kopdesId
+      ? await this.prisma.koperasi.findUnique({
+          where: { id: user.kopdesId },
+          select: { id: true, name: true, village: true },
+        })
+      : null;
+
     return {
       accessToken,
       refreshToken,
@@ -195,6 +231,9 @@ export class AuthService {
         name: user.name,
         phone: user.phone,
         role: user.role,
+        kopdesId: user.kopdesId ?? null,
+        kopdes,
+        permissions: resolvePermissions(user.role, user.permissions),
       },
     };
   }

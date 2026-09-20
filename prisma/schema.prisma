@@ -56,10 +56,83 @@ enum UMKMStatus {
   SUSPENDED
 }
 
+/// Pengelompokan kategori untuk dua baris filter di Marketplace.
+///
+/// Tanpa ini, "Filter Makanan" dan "Filter Barang Ritel" hanya bisa ditebak
+/// dari nama kategori — dan tebakan itu akan meleset begitu pengurus menambah
+/// kategori baru.
+enum CategoryGroup {
+  FOOD
+  RETAIL
+}
+
+/// Kategori usaha Mitra UMKM. Dipakai sebagai filter di beranda customer.
+enum UMKMCategory {
+  KULINER
+  SWALAYAN
+  MINUMAN
+  KERAJINAN
+  JASA
+  LAINNYA
+}
+
 enum InventoryTransactionType {
   IN
   OUT
   ADJUSTMENT
+}
+
+/// Koperasi Desa Merah Putih.
+///
+/// Dibuat multi-baris sejak awal supaya SUPER_ADMIN tinggal menambah record
+/// untuk desa lain tanpa perlu refactor skema lagi. Saat ini hanya ada satu
+/// baris; `Product.kopdesId` dan `UMKM.kopdesId` sengaja masih nullable agar
+/// data lama tetap valid, dan bisa dijadikan wajib lewat migration terpisah
+/// setelah alur pembuatan Kopdes oleh super admin berjalan.
+model Koperasi {
+  id          String  @id @default(uuid())
+  name        String
+  description String?
+  logoUrl     String?
+  imageUrl    String?
+
+  // Alamat administratif
+  address    String
+  village    String // desa
+  district   String // kecamatan
+  city       String // kabupaten/kota
+  province   String
+  postalCode String?
+
+  /// Koordinat dipakai untuk pencarian terdekat. Wajib — tanpa ini record
+  /// tidak akan pernah muncul di hasil /koperasi/nearby.
+  latitude  Float
+  longitude Float
+
+  phone String?
+
+  /// Jam operasional per hari, mis.
+  /// { "mon": { "open": "07:00", "close": "17:00" }, "sun": null }
+  operatingHours Json?
+
+  /// Kategori layanan yang ditampilkan di card, mis. ["Sembako", "Pangan"].
+  serviceCategories String[] @default([])
+
+  isActive   Boolean @default(true)
+  isVerified Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products Product[]
+  umkms    UMKM[]
+  reviews  Review[]
+  staff    User[]    @relation("KopdesStaff")
+
+  /// Filter kasar bounding-box memakai index ini sebelum jarak Haversine
+  /// dihitung pada sisa baris.
+  @@index([latitude, longitude])
+  @@index([isActive])
 }
 
 model User {
@@ -69,6 +142,20 @@ model User {
   name      String
   phone     String?
   role      Role     @default(CUSTOMER)
+
+  /// Kopdes tempat staf (ADMIN_KOPDES / PEGAWAI_KOPDES) ditugaskan.
+  /// Seluruh query operasional staf disaring dengan kolom ini — tanpa itu
+  /// seorang pegawai bisa membaca pesanan desa lain. Nullable karena
+  /// CUSTOMER, UMKM, COURIER, dan SUPER_ADMIN tidak terikat satu desa.
+  kopdesId String?
+  kopdes   Koperasi? @relation("KopdesStaff", fields: [kopdesId], references: [id])
+
+  /// Penyempitan permission per pengguna. Kosong = pakai bawaan role
+  /// (lihat src/common/permissions.ts). Terisi = hanya yang tercantum,
+  /// dan tetap dipotong oleh bawaan role sehingga tidak bisa menaikkan
+  /// wewenang melewati batas rolenya.
+  permissions String[] @default([])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -87,6 +174,8 @@ model User {
   conversationsAsA      Conversation[]               @relation("ConvUser1")
   conversationsAsB      Conversation[]               @relation("ConvUser2")
   chatMessages          ChatMessage[]
+
+  @@index([kopdesId])
 }
 
 model RefreshToken {
@@ -121,11 +210,19 @@ model Category {
   id          String   @id @default(uuid())
   name        String   @unique
   description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+
+  /// Menentukan baris filter mana yang menampilkan kategori ini di
+  /// Marketplace. RETAIL sebagai default: kategori baru muncul di barang
+  /// ritel sampai pengurus memindahkannya — bukan hilang dari kedua baris.
+  group CategoryGroup @default(RETAIL)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   products     Product[]
   umkmProducts UMKMProduct[]
+
+  @@index([group])
 }
 
 model Product {
@@ -136,7 +233,28 @@ model Product {
   stock               Int
   categoryId          String
   category            Category  @relation(fields: [categoryId], references: [id])
+  kopdesId            String?
+  kopdes              Koperasi? @relation(fields: [kopdesId], references: [id])
   isActive            Boolean   @default(true)
+
+  /// Harga coret. Null = tidak sedang diskon. Decimal, bukan Float:
+  /// nominal rupiah tidak boleh kehilangan presisi.
+  discountPrice Decimal? @db.Decimal(12, 2)
+
+  /// Satuan jual yang tampil di samping harga, mis. "kg", "pcs", "liter".
+  unit String @default("pcs")
+
+  /// Kode internal Kopdes. Unik per Kopdes, bukan global — dua desa boleh
+  /// memakai kode yang sama untuk barang mereka masing-masing.
+  sku String?
+
+  /// Ambang "stok menipis". KPI dashboard memakai kolom ini, bukan angka
+  /// ajaib di kode: tiap barang punya titik pesan ulang yang berbeda.
+  minStock Int @default(5)
+
+  /// Ditandai admin sebagai produk pilihan untuk beranda.
+  isFeatured Boolean @default(false)
+
   isPreOrderAllowed   Boolean   @default(false)
   preOrderAvailableAt DateTime?
   createdAt           DateTime  @default(now())
@@ -147,6 +265,10 @@ model Product {
   cartItems             CartItem[]
   orderItems            OrderItem[]
   inventoryTransactions InventoryTransaction[]
+
+  @@index([kopdesId])
+  @@index([isFeatured])
+  @@unique([kopdesId, sku])
 }
 
 model ProductImage {
@@ -191,6 +313,22 @@ model Order {
   id                String        @id @default(uuid())
   customerId        String
   customer          User          @relation("CustomerOrders", fields: [customerId], references: [id])
+
+  /// Nilai barang sebelum ongkir dan diskon.
+  ///
+  /// Disimpan terpisah, bukan disimpulkan dari `totalAmount`: begitu ongkir
+  /// atau diskon ikut dihitung, tidak ada cara memulihkan nilai barang dari
+  /// satu angka total — dan rekap keuangan koperasi butuh ketiganya.
+  subtotal Decimal @default(0) @db.Decimal(12, 2)
+
+  /// Ongkir yang dibebankan ke pemesan. Nol untuk pickup.
+  shippingFee Decimal @default(0) @db.Decimal(12, 2)
+
+  /// Potongan promo/voucher yang berlaku pada pesanan ini.
+  discountAmount Decimal @default(0) @db.Decimal(12, 2)
+
+  /// subtotal + shippingFee - discountAmount. Tetap disimpan agar nominal
+  /// yang ditagihkan tidak pernah berubah kalau rumusnya direvisi nanti.
   totalAmount       Decimal       @db.Decimal(12, 2)
   status            OrderStatus   @default(PENDING)
   paymentMethod     PaymentMethod
@@ -284,10 +422,30 @@ model UMKM {
   status          UMKMStatus @default(PENDING_VERIFICATION)
   rejectionReason String?
   verifiedAt      DateTime?
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+
+  /// Nullable: 3 UMKM yang sudah ada terdaftar sebelum koordinat diminta.
+  /// UMKM tanpa koordinat tidak muncul di hasil pencarian terdekat.
+  latitude  Float?
+  longitude Float?
+
+  category       UMKMCategory @default(LAINNYA)
+  photoUrl       String?
+  /// Bentuk sama dengan Koperasi.operatingHours.
+  operatingHours Json?
+
+  /// Kopdes tempat UMKM ini bermitra (1 desa = 1 Kopdes).
+  kopdesId String?
+  kopdes   Koperasi? @relation(fields: [kopdesId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   products UMKMProduct[]
+  reviews  Review[]
+
+  @@index([latitude, longitude])
+  @@index([category])
+  @@index([kopdesId])
 }
 
 model UMKMProduct {
@@ -303,6 +461,9 @@ model UMKMProduct {
   isApproved          Boolean   @default(false)
   rejectionReason     String?
   isActive            Boolean   @default(true)
+
+  /// Ditandai admin sebagai "Produk UMKM Pilihan" di beranda.
+  isFeatured Boolean @default(false)
   isPreOrderAllowed   Boolean   @default(false)
   preOrderAvailableAt DateTime?
   createdAt           DateTime  @default(now())
@@ -313,6 +474,73 @@ model UMKMProduct {
   orderItems            OrderItem[]
   reviews               Review[]
   inventoryTransactions InventoryTransaction[]
+
+  @@index([isFeatured])
+}
+
+/// Ulasan pengguna.
+///
+/// Satu baris menunjuk tepat satu sasaran: produk koperasi, produk UMKM,
+/// Kopdes, atau Mitra UMKM. Rating pada card Kopdes/UMKM dihitung dari
+/// agregasi baris-baris ini — tidak ada kolom rating yang ditulis manual,
+/// sehingga angkanya selalu berasal dari ulasan nyata.
+/// Halaman informasi yang isinya dikelola dari backend.
+///
+/// Dipakai untuk konten yang harus bisa diperbarui tanpa merilis ulang
+/// aplikasi — dan, untuk materi keanggotaan koperasi, konten yang **tidak
+/// boleh ditulis pengembang**: syarat, kewajiban, dan mekanisme simpanan
+/// mengikuti AD/ART koperasi dan hanya boleh diisi pengurus.
+model ContentPage {
+  id    String @id @default(uuid())
+  /// Pengenal stabil yang dirujuk aplikasi, mis. `belanja-lokal`.
+  slug  String @unique
+  title String
+
+  subtitle String?
+
+  /// Bagian isi terurut: [{ heading, body }]. Bentuk sederhana ini cukup
+  /// untuk artikel informasi dan tidak menuntut editor kaya.
+  sections Json @default("[]")
+
+  /// Catatan kaki, mis. dasar aturan atau kontak resmi.
+  footnote String?
+
+  /// Halaman yang belum terbit tetap bisa disiapkan tanpa terlihat pengguna.
+  isPublished Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isPublished])
+}
+
+/// Banner promosi beranda, dikelola admin.
+///
+/// Sebelumnya daftar banner ditulis tetap di dalam widget Flutter, sehingga
+/// mengganti promo berarti merilis ulang aplikasi.
+model Banner {
+  id          String  @id @default(uuid())
+  badge       String?
+  title       String
+  highlight   String?
+  description String?
+  ctaLabel    String?
+
+  /// Rute dalam aplikasi yang dibuka saat banner ditekan, mis. `/products`.
+  ctaRoute String?
+  imageUrl String?
+
+  isActive  Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  /// Jendela tayang. Null berarti tanpa batas.
+  startsAt DateTime?
+  endsAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
 }
 
 model Review {
@@ -321,12 +549,33 @@ model Review {
   product       Product?     @relation(fields: [productId], references: [id])
   umkmProductId String?
   umkmProduct   UMKMProduct? @relation(fields: [umkmProductId], references: [id])
-  userId        String
-  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  rating        Int
-  comment       String?
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+
+  /// Ulasan untuk Kopdes sebagai tempat, bukan untuk produknya.
+  koperasiId String?
+  koperasi   Koperasi? @relation(fields: [koperasiId], references: [id], onDelete: Cascade)
+
+  /// Ulasan untuk Mitra UMKM sebagai usaha.
+  umkmId String?
+  umkm   UMKM?   @relation(fields: [umkmId], references: [id], onDelete: Cascade)
+
+  userId  String
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rating  Int
+  comment String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Satu pengguna satu ulasan per sasaran. Postgres memperbolehkan banyak
+  /// NULL pada unique index, jadi keempat batasan ini tidak saling mengunci.
+  @@unique([userId, koperasiId])
+  @@unique([userId, umkmId])
+  @@unique([userId, productId])
+  @@unique([userId, umkmProductId])
+  @@index([koperasiId])
+  @@index([umkmId])
+  @@index([productId])
+  @@index([umkmProductId])
 }
 
 model CommunitySuggestion {

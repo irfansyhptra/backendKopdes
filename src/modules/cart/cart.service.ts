@@ -29,11 +29,13 @@ export class CartService {
               product: {
                 include: {
                   images: true,
+                  kopdes: { select: { id: true, name: true } },
                 },
               },
               umkmProduct: {
                 include: {
                   images: true,
+                  umkm: { select: { id: true, businessName: true, status: true } },
                 },
               },
             },
@@ -56,11 +58,13 @@ export class CartService {
                 product: {
                   include: {
                     images: true,
+                    kopdes: { select: { id: true, name: true } },
                   },
                 },
                 umkmProduct: {
                   include: {
                     images: true,
+                    umkm: { select: { id: true, businessName: true, status: true } },
                   },
                 },
               },
@@ -81,11 +85,13 @@ export class CartService {
               product: {
                 include: {
                   images: true,
+                  kopdes: { select: { id: true, name: true } },
                 },
               },
               umkmProduct: {
                 include: {
                   images: true,
+                  umkm: { select: { id: true, businessName: true, status: true } },
                 },
               },
             },

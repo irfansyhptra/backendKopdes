@@ -5,6 +5,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import { CacheService } from '../../cache/cache.service';
+import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { Role, OrderStatus } from '@prisma/client';
 import { PasswordHelper } from '../auth/helpers/crypto.helper';
 import {
@@ -22,12 +24,38 @@ const safeUserSelect = {
   name: true,
   phone: true,
   role: true,
+  kopdesId: true,
+  permissions: true,
   createdAt: true,
 };
 
 @Injectable()
 export class SuperAdminService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cache: CacheService,
+  ) {}
+
+  /**
+   * Membuang konteks staf yang di-cache PermissionsGuard.
+   *
+   * Tanpa ini pencabutan wewenang baru berlaku setelah TTL 60 detik habis —
+   * cukup lama untuk menyelesaikan tindakan yang baru saja dilarang.
+   */
+  private async invalidateContext(userId: string) {
+    await this.cache
+      .delete(PermissionsGuard.cacheKey(userId))
+      .catch(() => undefined);
+  }
+
+  /** Staf desa wajib punya penugasan Kopdes; tanpa itu dashboardnya kosong. */
+  private async assertKopdesExists(kopdesId: string) {
+    const found = await this.prisma.koperasi.findUnique({
+      where: { id: kopdesId },
+      select: { id: true },
+    });
+    if (!found) throw new NotFoundException('Kopdes tidak ditemukan');
+  }
 
   private assertStaffRole(role: Role) {
     if (!STAFF_ROLES.includes(role)) {
@@ -40,6 +68,7 @@ export class SuperAdminService {
   // ── Akun staf Kopdes ──
   async createStaff(dto: CreateStaffDto) {
     this.assertStaffRole(dto.role);
+    if (dto.kopdesId) await this.assertKopdesExists(dto.kopdesId);
 
     const existing = await this.prisma.user.findUnique({
       where: { email: dto.email },
@@ -53,6 +82,8 @@ export class SuperAdminService {
         name: dto.name,
         phone: dto.phone,
         role: dto.role,
+        kopdesId: dto.kopdesId ?? null,
+        permissions: dto.permissions ?? [],
       },
       select: safeUserSelect,
     });
@@ -71,7 +102,9 @@ export class SuperAdminService {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('Akun tidak ditemukan');
     if (!STAFF_ROLES.includes(user.role)) {
-      throw new ForbiddenException('Hanya akun staf Kopdes yang dapat dikelola');
+      throw new ForbiddenException(
+        'Hanya akun staf Kopdes yang dapat dikelola',
+      );
     }
     return user;
   }
@@ -79,22 +112,30 @@ export class SuperAdminService {
   async updateStaff(id: string, dto: UpdateStaffDto) {
     await this.getStaffOrThrow(id);
     if (dto.role) this.assertStaffRole(dto.role);
+    if (dto.kopdesId) await this.assertKopdesExists(dto.kopdesId);
 
-    return this.prisma.user.update({
+    const updated = await this.prisma.user.update({
       where: { id },
       data: {
         name: dto.name,
         phone: dto.phone,
         role: dto.role,
-        ...(dto.password ? { password: PasswordHelper.hash(dto.password) } : {}),
+        kopdesId: dto.kopdesId,
+        permissions: dto.permissions,
+        ...(dto.password
+          ? { password: PasswordHelper.hash(dto.password) }
+          : {}),
       },
       select: safeUserSelect,
     });
+    await this.invalidateContext(id);
+    return updated;
   }
 
   async deleteStaff(id: string) {
     await this.getStaffOrThrow(id);
     await this.prisma.user.delete({ where: { id } });
+    await this.invalidateContext(id);
   }
 
   // ── Direktori seluruh pengguna ──

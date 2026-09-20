@@ -1,10 +1,24 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Body,
+  Param,
+  UseGuards,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
 import { CategoryService } from './category.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { RequirePermissions } from '../auth/decorators/permissions.decorator';
+import { Permission } from '../../common/permissions';
 import { Role } from '@prisma/client';
 
 @Controller('categories')
@@ -24,24 +38,27 @@ export class CategoryController {
   }
 
   @Post()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles(Role.ADMIN_KOPDES, Role.SUPER_ADMIN)
+  @RequirePermissions(Permission.CATEGORY_MANAGE)
   async create(@Body() dto: CreateCategoryDto) {
     const data = await this.categoryService.create(dto);
     return { success: true, data };
   }
 
   @Put(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles(Role.ADMIN_KOPDES, Role.SUPER_ADMIN)
+  @RequirePermissions(Permission.CATEGORY_MANAGE)
   async update(@Param('id') id: string, @Body() dto: UpdateCategoryDto) {
     const data = await this.categoryService.update(id, dto);
     return { success: true, data };
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles(Role.ADMIN_KOPDES, Role.SUPER_ADMIN)
+  @RequirePermissions(Permission.CATEGORY_MANAGE)
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(@Param('id') id: string) {
     await this.categoryService.remove(id);

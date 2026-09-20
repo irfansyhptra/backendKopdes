@@ -1,6 +1,11 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
-import { DeliveryStatus, Role } from '@prisma/client';
+import { DeliveryStatus, Prisma, Role } from '@prisma/client';
 
 @Injectable()
 export class DeliveryService {
@@ -35,9 +40,47 @@ export class DeliveryService {
     return withLoad;
   }
 
-  async listDeliveries(status?: DeliveryStatus) {
-    const where: any = {};
-    if (status) where.status = status;
+  /**
+   * Pengantaran milik satu Kopdes, ditelusuri lewat baris pesanannya —
+   * `Delivery` sendiri tidak menyimpan kopdesId.
+   */
+  static kopdesScope(kopdesId: string | null): Prisma.DeliveryWhereInput {
+    if (!kopdesId) return {};
+    return {
+      order: {
+        items: {
+          some: {
+            OR: [
+              { product: { kopdesId } },
+              { umkmProduct: { umkm: { kopdesId } } },
+            ],
+          },
+        },
+      },
+    };
+  }
+
+  private async assertScope(deliveryId: string, kopdesId: string | null) {
+    if (!kopdesId) return;
+    const owned = await this.prisma.delivery.findFirst({
+      where: { id: deliveryId, ...DeliveryService.kopdesScope(kopdesId) },
+      select: { id: true },
+    });
+    if (!owned) {
+      throw new ForbiddenException(
+        'Pengantaran ini bukan milik Kopdes tempat Anda bertugas',
+      );
+    }
+  }
+
+  async listDeliveries(
+    status?: DeliveryStatus,
+    kopdesId: string | null = null,
+  ) {
+    const where: Prisma.DeliveryWhereInput = {
+      ...DeliveryService.kopdesScope(kopdesId),
+      ...(status ? { status } : {}),
+    };
 
     return this.prisma.delivery.findMany({
       where,
@@ -54,18 +97,43 @@ export class DeliveryService {
     });
   }
 
-  async assignCourier(deliveryId: string, courierId: string) {
+  /** Status setelah barang berpindah tangan — penugasan tidak boleh diubah lagi. */
+  private static readonly LOCKED_STATUSES: DeliveryStatus[] = [
+    DeliveryStatus.PICKED_UP,
+    DeliveryStatus.IN_TRANSIT,
+    DeliveryStatus.COURIER_DELIVERED,
+    DeliveryStatus.CUSTOMER_CONFIRMED,
+    DeliveryStatus.COMPLETED,
+  ];
+
+  async assignCourier(
+    deliveryId: string,
+    courierId: string,
+    actor?: { id: string; kopdesId: string | null },
+  ) {
     const delivery = await this.prisma.delivery.findUnique({
       where: { id: deliveryId },
     });
-    if (!delivery) throw new NotFoundException(`Pengantaran ${deliveryId} tidak ditemukan`);
+    if (!delivery)
+      throw new NotFoundException(`Pengantaran ${deliveryId} tidak ditemukan`);
+    await this.assertScope(deliveryId, actor?.kopdesId ?? null);
 
-    const courier = await this.prisma.user.findUnique({ where: { id: courierId } });
+    // Mengganti kurir setelah barang diambil membuat riwayat pengantaran
+    // berbohong: yang membawa barang bukan yang tercatat.
+    if (DeliveryService.LOCKED_STATUSES.includes(delivery.status)) {
+      throw new BadRequestException(
+        `Pengantaran berstatus ${delivery.status} tidak bisa dialihkan kurirnya`,
+      );
+    }
+
+    const courier = await this.prisma.user.findUnique({
+      where: { id: courierId },
+    });
     if (!courier || courier.role !== Role.COURIER) {
       throw new BadRequestException('Kurir tidak valid');
     }
 
-    return this.prisma.delivery.update({
+    const updated = await this.prisma.delivery.update({
       where: { id: deliveryId },
       data: { courierId, status: DeliveryStatus.ASSIGNED },
       include: {
@@ -78,6 +146,76 @@ export class DeliveryService {
         },
       },
     });
+
+    await this.writeAudit(actor?.id, 'DELIVERY_ASSIGN', {
+      deliveryId,
+      before: { courierId: delivery.courierId, status: delivery.status },
+      after: { courierId, status: DeliveryStatus.ASSIGNED },
+    });
+
+    return updated;
+  }
+
+  /**
+   * Melepas kurir dari sebuah pengantaran.
+   *
+   * Hanya sebelum barang diambil. Setelah `PICKED_UP` barang sudah ada di
+   * tangan kurir, dan melepas penugasannya di sistem tidak mengembalikan
+   * barangnya — yang tersisa hanya catatan yang tidak cocok dengan kenyataan.
+   */
+  async unassignCourier(
+    deliveryId: string,
+    actor?: { id: string; kopdesId: string | null },
+  ) {
+    const delivery = await this.prisma.delivery.findUnique({
+      where: { id: deliveryId },
+    });
+    if (!delivery)
+      throw new NotFoundException(`Pengantaran ${deliveryId} tidak ditemukan`);
+    await this.assertScope(deliveryId, actor?.kopdesId ?? null);
+
+    if (DeliveryService.LOCKED_STATUSES.includes(delivery.status)) {
+      throw new BadRequestException(
+        'Penugasan hanya bisa dibatalkan sebelum barang diambil kurir',
+      );
+    }
+    if (!delivery.courierId) {
+      throw new BadRequestException('Pengantaran ini belum punya kurir');
+    }
+
+    const updated = await this.prisma.delivery.update({
+      where: { id: deliveryId },
+      data: { courierId: null, status: DeliveryStatus.ASSIGNED },
+      include: {
+        order: {
+          include: {
+            customer: { select: { id: true, name: true, phone: true } },
+            deliveryAddress: true,
+          },
+        },
+      },
+    });
+
+    await this.writeAudit(actor?.id, 'DELIVERY_UNASSIGN', {
+      deliveryId,
+      before: { courierId: delivery.courierId, status: delivery.status },
+      after: { courierId: null },
+    });
+
+    return updated;
+  }
+
+  private async writeAudit(
+    actorId: string | undefined,
+    action: string,
+    details: unknown,
+  ) {
+    if (!actorId) return;
+    await this.prisma.auditLog
+      .create({
+        data: { userId: actorId, action, details: JSON.stringify(details) },
+      })
+      .catch(() => undefined);
   }
 
   // 1. Get list of deliveries assigned to specific Courier
@@ -118,7 +256,9 @@ export class DeliveryService {
     }
 
     if (delivery.courierId !== courierId) {
-      throw new BadRequestException('Pengantaran ini tidak ditugaskan kepada Anda');
+      throw new BadRequestException(
+        'Pengantaran ini tidak ditugaskan kepada Anda',
+      );
     }
 
     const now = new Date();
@@ -175,7 +315,9 @@ export class DeliveryService {
     });
 
     if (!delivery) {
-      throw new NotFoundException(`Data pengiriman untuk Order ${orderId} tidak ditemukan`);
+      throw new NotFoundException(
+        `Data pengiriman untuk Order ${orderId} tidak ditemukan`,
+      );
     }
 
     if (delivery.order.customerId !== customerId) {
@@ -198,7 +340,10 @@ export class DeliveryService {
         where: { id: orderId },
         data: {
           status: 'COMPLETED',
-          paymentStatus: delivery.order.paymentMethod === 'COD' ? 'PAID' : delivery.order.paymentStatus,
+          paymentStatus:
+            delivery.order.paymentMethod === 'COD'
+              ? 'PAID'
+              : delivery.order.paymentStatus,
         },
       });
 
@@ -226,7 +371,12 @@ export class DeliveryService {
   }
 
   // 4. Track Kurir GPS location
-  async updateCourierLocation(deliveryId: string, courierId: string, latitude: number, longitude: number) {
+  async updateCourierLocation(
+    deliveryId: string,
+    courierId: string,
+    latitude: number,
+    longitude: number,
+  ) {
     const delivery = await this.prisma.delivery.findUnique({
       where: { id: deliveryId },
     });
@@ -236,7 +386,9 @@ export class DeliveryService {
     }
 
     if (delivery.courierId !== courierId) {
-      throw new BadRequestException('Anda bukan kurir penanggung jawab pengiriman ini');
+      throw new BadRequestException(
+        'Anda bukan kurir penanggung jawab pengiriman ini',
+      );
     }
 
     return this.prisma.deliveryLocation.create({
@@ -249,4 +401,3 @@ export class DeliveryService {
     });
   }
 }
-

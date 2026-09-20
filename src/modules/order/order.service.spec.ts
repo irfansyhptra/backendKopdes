@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { OrderService } from './order.service';
 
 // Fokus spec ini hanya pada penjagaan akses updateStatus() dan getTimeline().
@@ -29,7 +29,7 @@ describe('OrderService — authorization', () => {
     };
 
     prisma = {
-      order: { findUnique: jest.fn() },
+      order: { findUnique: jest.fn(), findFirst: jest.fn() },
       auditLog: { create: jest.fn(), findMany: jest.fn(async () => []) },
       $transaction: jest.fn(async (cb: any) => cb(tx)),
     };
@@ -37,6 +37,8 @@ describe('OrderService — authorization', () => {
       get: jest.fn(async () => null),
       set: jest.fn(),
       delete: jest.fn(),
+      // Riwayat kini di-cache per halaman, jadi invalidasinya memakai pola.
+      deletePattern: jest.fn(),
     };
 
     // updateStatus & getTimeline tidak menyentuh alamat.
@@ -48,7 +50,12 @@ describe('OrderService — authorization', () => {
       prisma.order.findUnique.mockResolvedValue(order());
 
       await expect(
-        service.updateStatus(STRANGER, 'order-1', 'PROCESSING' as any, 'CUSTOMER'),
+        service.updateStatus(
+          STRANGER,
+          'order-1',
+          'PROCESSING' as any,
+          'CUSTOMER',
+        ),
       ).rejects.toThrow(ForbiddenException);
       expect(prisma.$transaction).not.toHaveBeenCalled();
     });
@@ -63,7 +70,9 @@ describe('OrderService — authorization', () => {
     });
 
     it('menolak pembatalan setelah pesanan diproses', async () => {
-      prisma.order.findUnique.mockResolvedValue(order({ status: 'PROCESSING' }));
+      prisma.order.findUnique.mockResolvedValue(
+        order({ status: 'PROCESSING' }),
+      );
 
       await expect(
         service.updateStatus(OWNER, 'order-1', 'CANCELLED' as any, 'CUSTOMER'),
@@ -90,6 +99,67 @@ describe('OrderService — authorization', () => {
         expect(prisma.$transaction).toHaveBeenCalled();
       },
     );
+  });
+
+  describe('updateStatus — transisi & lingkup Kopdes', () => {
+    it('menolak lompatan status yang melewati tahap kerja', async () => {
+      prisma.order.findUnique.mockResolvedValue(order());
+
+      await expect(
+        service.updateStatus(
+          'staff-1',
+          'order-1',
+          'COMPLETED' as any,
+          'PEGAWAI_KOPDES',
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('menolak perubahan pada pesanan yang sudah final', async () => {
+      prisma.order.findUnique.mockResolvedValue(order({ status: 'COMPLETED' }));
+
+      await expect(
+        service.updateStatus(
+          'staff-1',
+          'order-1',
+          'PROCESSING' as any,
+          'ADMIN_KOPDES',
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('menolak pegawai menyentuh pesanan Kopdes lain', async () => {
+      prisma.order.findUnique.mockResolvedValue(order());
+      prisma.order.findFirst.mockResolvedValue(null); // bukan milik desanya
+
+      await expect(
+        service.updateStatus(
+          'staff-1',
+          'order-1',
+          'PROCESSING' as any,
+          'PEGAWAI_KOPDES',
+          'kop-lain',
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('mengizinkan pegawai memproses pesanan desanya sendiri', async () => {
+      prisma.order.findUnique.mockResolvedValue(order());
+      prisma.order.findFirst.mockResolvedValue({ id: 'order-1' });
+
+      await expect(
+        service.updateStatus(
+          'staff-1',
+          'order-1',
+          'PROCESSING' as any,
+          'PEGAWAI_KOPDES',
+          'kop-1',
+        ),
+      ).resolves.toBeDefined();
+      expect(prisma.$transaction).toHaveBeenCalled();
+    });
   });
 
   describe('getTimeline', () => {
