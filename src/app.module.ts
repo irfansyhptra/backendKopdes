@@ -26,6 +26,7 @@ import { ChatModule } from './modules/chat/chat.module';
 import { SuperAdminModule } from './modules/superadmin/superadmin.module';
 import { AddressModule } from './modules/address/address.module';
 import { StaffModule } from './modules/staff/staff.module';
+import { PaymentModule } from './modules/payment/payment.module';
 import { ReviewModule } from './modules/review/review.module';
 
 @Module({
@@ -57,6 +58,7 @@ import { ReviewModule } from './modules/review/review.module';
     SuperAdminModule,
     AddressModule,
     StaffModule,
+    PaymentModule,
     ReviewModule,
   ],
   controllers: [AppController],

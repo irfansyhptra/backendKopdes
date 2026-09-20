@@ -27,9 +27,22 @@ enum OrderStatus {
   CANCELLED
 }
 
+/// Metode pembayaran.
+///
+/// COD dan QRIS sudah ada sejak awal; QRIS kini ditangani Midtrans Core API,
+/// bukan kode tiruan. Sisanya metode Midtrans yang aktif di akun merchant —
+/// yang belum aktif sengaja tidak didaftarkan di sini supaya tidak ada
+/// pilihan yang pasti gagal saat ditekan.
 enum PaymentMethod {
-  QRIS
   COD
+  QRIS
+  GOPAY
+  SHOPEEPAY
+  BCA_VA
+  BNI_VA
+  BRI_VA
+  PERMATA_VA
+  MANDIRI_BILL
 }
 
 enum PaymentStatus {
@@ -379,6 +392,11 @@ model Invoice {
   updatedAt     DateTime @updatedAt
 }
 
+/// Pembayaran satu pesanan.
+///
+/// Satu baris per pesanan (`orderId` unik). Kolom Midtrans ditambahkan di
+/// sini alih-alih di tabel baru: pesanan hanya punya satu pembayaran, dan
+/// tabel kedua akan menduplikasi status yang harus selalu sama.
 model Payment {
   id            String        @id @default(uuid())
   orderId       String        @unique
@@ -389,8 +407,83 @@ model Payment {
   transactionId String?       @unique
   qrisCode      String?
   paidAt        DateTime?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+
+  // ── Midtrans ──
+  /// `order_id` yang dikirim ke Midtrans: KOMIT-{orderId}-{timestamp}.
+  /// Unik dan tidak sama dengan id pesanan kita — Midtrans menolak order_id
+  /// yang dipakai ulang, sementara pesanan yang kedaluwarsa boleh dibayar
+  /// ulang dengan transaksi baru.
+  midtransOrderId String? @unique
+
+  /// `payment_type` mentah dari Midtrans (qris, gopay, bank_transfer, …).
+  /// Disimpan apa adanya supaya bentuk respons yang berbeda per metode tetap
+  /// bisa ditelusuri tanpa menebak dari `method`.
+  midtransPaymentType String?
+
+  /// Bank penerbit VA, dan nomornya. Hanya terisi untuk bank_transfer.
+  bank     String?
+  vaNumber String?
+
+  /// Tautan yang diberikan Midtrans. Tidak pernah dibuat sendiri — QR yang
+  /// digambar aplikasi bukan QR yang diakui penerbitnya.
+  qrCodeUrl   String?
+  deeplinkUrl String?
+
+  /// Status mentah Midtrans beserta penilaian fraud-nya. Dipisah dari
+  /// `status` internal supaya pemetaannya bisa diperiksa ulang.
+  transactionStatus String?
+  fraudStatus       String?
+
+  expiryTime DateTime?
+
+  /// Respons charge terakhir, untuk penelusuran. Tidak memuat rahasia:
+  /// Midtrans tidak mengembalikan kunci apa pun pada respons charge.
+  rawResponse Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  webhookEvents PaymentWebhookEvent[]
+
+  @@index([status])
+  @@index([expiryTime])
+}
+
+/// Notifikasi webhook Midtrans yang sudah diproses.
+///
+/// Ada dua alasan menyimpannya: idempotensi — Midtrans mengirim ulang
+/// notifikasi yang sama sampai dijawab 200, dan satu notifikasi tidak boleh
+/// mengubah pesanan dua kali; dan jejak audit ketika status pesanan
+/// dipertanyakan kemudian.
+model PaymentWebhookEvent {
+  id        String   @id @default(uuid())
+  paymentId String?
+  payment   Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  /// `order_id` dari notifikasi; bukan id pesanan kita.
+  midtransOrderId String
+
+  /// `transaction_id` Midtrans. Bersama statusnya membentuk kunci unik:
+  /// satu transaksi bisa sah mengirim beberapa status berbeda (pending lalu
+  /// settlement), tetapi status yang sama tidak boleh diproses dua kali.
+  transactionId     String
+  transactionStatus String
+  fraudStatus       String?
+  statusCode        String
+  grossAmount       String
+
+  /// Payload utuh. Tidak memuat rahasia — `signature_key` di dalamnya adalah
+  /// hasil hash, bukan kunci server.
+  payload Json
+
+  /// Diisi bila notifikasi ditolak, beserta alasannya.
+  rejectedReason String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([transactionId, transactionStatus])
+  @@index([midtransOrderId])
+  @@index([createdAt])
 }
 
 model Delivery {
