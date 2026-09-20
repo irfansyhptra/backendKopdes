@@ -218,13 +218,25 @@ export class StorageService {
     form.append('signature', signature);
 
     try {
-      await fetch(
+      const res = await fetch(
         `https://api.cloudinary.com/v1_1/${this.cloudName}/image/destroy`,
         { method: 'POST', body: form },
       );
+      const body = (await res.json().catch(() => null)) as {
+        result?: string;
+      } | null;
+
+      // Cloudinary menjawab 200 dengan `{"result":"not found"}` untuk
+      // public_id yang keliru. Tanpa memeriksanya, penghapusan yang meleset
+      // lewat tanpa satu pun tanda dan berkasnya menumpuk diam-diam.
+      if (!res.ok || body?.result !== 'ok') {
+        this.logger.warn(
+          `Cloudinary tidak menghapus ${publicId}: ${body?.result ?? res.status}`,
+        );
+      }
     } catch (err) {
-      // Berkas yatim di Cloudinary tidak sebanding dengan menggagalkan
-      // penghapusan produk yang sudah diminta pengguna.
+      // Tetap tidak dilempar: berkas yatim di Cloudinary tidak sebanding
+      // dengan menggagalkan penghapusan produk yang sudah diminta pengguna.
       this.logger.warn(`Gagal menghapus ${publicId}: ${String(err)}`);
     }
   }

@@ -163,12 +163,40 @@ describe('publicIdFromUrl', () => {
 });
 
 describe('penghapusan', () => {
+  it('mencatat peringatan bila Cloudinary menjawab "not found"', async () => {
+    // Cloudinary menjawab 200 untuk public_id keliru; tanpa memeriksa
+    // `result`, penghapusan yang meleset lewat tanpa satu pun tanda.
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ result: 'not found' }),
+    }) as never;
+    const svc = build();
+    const warn = jest.spyOn(svc['logger'], 'warn').mockImplementation(() => undefined);
+    await svc.deleteFile('https://res.cloudinary.com/kopdes/image/upload/v1/a.png');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('not found'));
+  });
+
+  it('tidak mencatat apa pun bila berhasil', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ result: 'ok' }),
+    }) as never;
+    const svc = build();
+    const warn = jest.spyOn(svc['logger'], 'warn').mockImplementation(() => undefined);
+    await svc.deleteFile('https://res.cloudinary.com/kopdes/image/upload/v1/a.png');
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it('kegagalan hapus tidak dilempar — produk tetap boleh dihapus', async () => {
     global.fetch = jest.fn().mockRejectedValue(new Error('mati')) as never;
+    const svc = build();
+    jest.spyOn(svc['logger'], 'warn').mockImplementation(() => undefined);
     // Berkas yatim di Cloudinary tidak sebanding dengan menggagalkan
     // penghapusan produk yang sudah diminta pengguna.
     await expect(
-      build().deleteFile('https://res.cloudinary.com/kopdes/image/upload/v1/a.png'),
+      svc.deleteFile('https://res.cloudinary.com/kopdes/image/upload/v1/a.png'),
     ).resolves.toBeUndefined();
   });
 });
