@@ -43,14 +43,25 @@ class EnvironmentVariables {
   @IsOptional()
   REFRESH_TOKEN_EXPIRES_IN = '7d';
 
+  /**
+   * Cloudinary menggantikan Supabase Storage.
+   *
+   * Opsional, bukan wajib: aplikasi tetap berguna tanpa unggahan gambar,
+   * dan mewajibkannya berarti satu variabel yang belum diisi menjatuhkan
+   * seluruh API. StorageService memperingatkan saat start lalu menjawab 503
+   * kalau ada yang mencoba mengunggah.
+   */
   @IsString()
-  SUPABASE_URL!: string;
+  @IsOptional()
+  CLOUDINARY_CLOUD_NAME?: string;
 
   @IsString()
-  SUPABASE_ANON_KEY!: string;
+  @IsOptional()
+  CLOUDINARY_API_KEY?: string;
 
   @IsString()
-  SUPABASE_SERVICE_ROLE_KEY!: string;
+  @IsOptional()
+  CLOUDINARY_API_SECRET?: string;
 
   @IsString()
   QDRANT_URL!: string;
