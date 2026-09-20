@@ -7,12 +7,12 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Role } from '@prisma/client';
-import { JwtAuthGuard } from '../modules/auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../modules/auth/guards/roles.guard';
-import { PermissionsGuard } from '../modules/auth/guards/permissions.guard';
-import { Roles } from '../modules/auth/decorators/roles.decorator';
-import { RequirePermissions } from '../modules/auth/decorators/permissions.decorator';
-import { Permission } from '../common/permissions';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { PermissionsGuard } from '../auth/guards/permissions.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RequirePermissions } from '../auth/decorators/permissions.decorator';
+import { Permission } from '../../common/permissions';
 
 /**
  * Tanda tangan unggahan Cloudinary.
