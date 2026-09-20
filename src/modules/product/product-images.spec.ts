@@ -9,10 +9,15 @@ import { ProductService } from './product.service';
  * dan "jangan sentuh gambar".
  */
 
-type Svc = ProductService & {
+/**
+ * Keduanya private di service. Diuji lewat tipe terpisah karena keduanya
+ * mengandung aturan yang mudah salah dan tidak punya endpoint sendiri —
+ * membuatnya public hanya demi tes akan melebarkan permukaan kelasnya.
+ */
+interface Svc {
   attachImageUrls(id: string, urls?: string[], offset?: number): Promise<void>;
   ensurePrimaryImage(id: string): Promise<void>;
-};
+}
 
 function build() {
   const productImage = {
@@ -22,7 +27,7 @@ function build() {
     count: jest.fn(),
     deleteMany: jest.fn(),
   };
-  const svc = Object.create(ProductService.prototype) as Svc;
+  const svc = Object.create(ProductService.prototype) as unknown as Svc;
   Object.assign(svc, { prisma: { productImage } });
   return { svc, productImage };
 }
