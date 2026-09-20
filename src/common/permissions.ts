@@ -49,6 +49,17 @@ export const Permission = {
 
   // Koperasi
   KOPDES_POLICY_MANAGE: 'kopdes:policy:manage',
+
+  /**
+   * Mengelola akun pegawai di dalam Kopdes sendiri.
+   *
+   * Dipisah dari `USER_MANAGE` dengan sengaja. `USER_MANAGE` adalah wewenang
+   * lintas desa milik Super Admin: membuat Admin Kopdes, memindahkan akun
+   * antar koperasi, menyentuh pelanggan. `STAFF_MANAGE` hanya menyentuh
+   * PEGAWAI_KOPDES di desa si pemegangnya, dan hanya boleh memberi wewenang
+   * yang memang milik pegawai.
+   */
+  STAFF_MANAGE: 'staff:manage',
   USER_MANAGE: 'user:manage',
 } as const;
 
@@ -92,6 +103,9 @@ const ADMIN_DEFAULTS: PermissionKey[] = [
   Permission.UMKM_LOCATION_UPDATE,
   Permission.AI_EXECUTIVE,
   Permission.KOPDES_POLICY_MANAGE,
+  // Admin Kopdes adalah pemilik koperasinya: ia yang mengangkat pegawainya
+  // sendiri. Lingkupnya dijaga di service, bukan di sini.
+  Permission.STAFF_MANAGE,
 ];
 
 export const ROLE_DEFAULT_PERMISSIONS: Record<Role, PermissionKey[]> = {
@@ -129,3 +143,116 @@ export function hasPermission(
 ): boolean {
   return granted.includes(required);
 }
+
+
+/**
+ * Wewenang yang boleh diberikan Admin Kopdes kepada pegawainya.
+ *
+ * Persis bawaan pegawai — tidak lebih. Admin tidak bisa mengangkat pegawai
+ * menjadi setara dirinya, dan `resolvePermissions` tetap menyaring sekali
+ * lagi seandainya daftar ini suatu saat keliru diperluas.
+ */
+export const ASSIGNABLE_TO_PEGAWAI: PermissionKey[] = [...PEGAWAI_DEFAULTS];
+
+export interface PermissionInfo {
+  key: PermissionKey;
+  /** Label yang dibaca pengurus koperasi, bukan nama teknisnya. */
+  label: string;
+  /** Bagian portal yang terbuka atau tertutup oleh izin ini. */
+  group: string;
+  description: string;
+}
+
+/**
+ * Katalog berlabel untuk panel pengaturan akun.
+ *
+ * Labelnya tinggal di sini, bukan di masing-masing klien: web dan Flutter
+ * memakai daftar yang sama, dan izin baru muncul dengan namanya sendiri
+ * alih-alih sebagai kunci mentah seperti "inventory:opname".
+ */
+export const PERMISSION_CATALOG: PermissionInfo[] = [
+  {
+    key: Permission.PRODUCT_READ,
+    label: 'Lihat katalog',
+    group: 'Barang',
+    description: 'Membuka daftar barang Kopdes.',
+  },
+  {
+    key: Permission.PRODUCT_CREATE,
+    label: 'Input barang baru',
+    group: 'Barang',
+    description: 'Menambah barang ke katalog koperasi.',
+  },
+  {
+    key: Permission.PRODUCT_UPDATE,
+    label: 'Ubah barang',
+    group: 'Barang',
+    description: 'Mengubah nama, harga, stok, dan gambar barang.',
+  },
+  {
+    key: Permission.ORDER_READ,
+    label: 'Lihat pesanan',
+    group: 'Pesanan',
+    description: 'Membuka daftar pesanan masuk dan riwayatnya.',
+  },
+  {
+    key: Permission.ORDER_PROCESS,
+    label: 'Proses pesanan',
+    group: 'Pesanan',
+    description: 'Memajukan status pesanan sampai siap dikirim.',
+  },
+  {
+    key: Permission.DELIVERY_READ,
+    label: 'Lihat pengiriman',
+    group: 'Pengiriman',
+    description: 'Membuka daftar pengantaran dan pelacakannya.',
+  },
+  {
+    key: Permission.DELIVERY_ASSIGN,
+    label: 'Tugaskan kurir',
+    group: 'Pengiriman',
+    description: 'Memilih kurir untuk sebuah pengantaran.',
+  },
+  {
+    key: Permission.DELIVERY_UNASSIGN,
+    label: 'Lepas kurir',
+    group: 'Pengiriman',
+    description: 'Membatalkan penugasan kurir yang belum mengambil barang.',
+  },
+  {
+    key: Permission.INVENTORY_READ,
+    label: 'Lihat stok',
+    group: 'Stok',
+    description: 'Membuka ringkasan dan mutasi stok.',
+  },
+  {
+    key: Permission.INVENTORY_ADJUST,
+    label: 'Sesuaikan stok',
+    group: 'Stok',
+    description: 'Mencatat barang masuk dan keluar.',
+  },
+  {
+    key: Permission.INVENTORY_OPNAME,
+    label: 'Stok opname',
+    group: 'Stok',
+    description: 'Mengoreksi stok tercatat ke hasil hitung fisik.',
+  },
+  {
+    key: Permission.FINANCE_READ_SUMMARY,
+    label: 'Rekap keuangan',
+    group: 'Keuangan',
+    description: 'Melihat omzet harian, mingguan, dan bulanan.',
+  },
+  {
+    key: Permission.MITRA_READ,
+    label: 'Lihat mitra UMKM',
+    group: 'Mitra',
+    description: 'Membuka daftar mitra UMKM desa.',
+  },
+  {
+    key: Permission.AI_ASSIST,
+    label: 'Asisten AI',
+    group: 'Lainnya',
+    description: 'Bertanya ke asisten operasional koperasi.',
+  },
+];
