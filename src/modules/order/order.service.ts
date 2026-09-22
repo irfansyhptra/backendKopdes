@@ -22,6 +22,21 @@ import {
   resolveShippingFee,
 } from './order-money';
 
+/**
+ * Batas transaksi checkout.
+ *
+ * Bawaan Prisma — tunggu 2 detik, jalan 5 detik — terlalu ketat untuk badan
+ * transaksi ini: ia menelusuri tiap baris keranjang, mengunci stoknya,
+ * mencatat mutasi inventaris, lalu membuat pesanan, pembayaran, dan faktur.
+ * Itu belasan perjalanan pulang-pergi ke database lewat pooler, dan pada
+ * fungsi serverless yang baru bangun, lima detik habis sebelum selesai —
+ * hasilnya 500 yang datang dan pergi tanpa pola.
+ *
+ * Dinaikkan, bukan dihilangkan: transaksi yang menggantung tanpa batas
+ * menahan kunci baris stok dan memblokir pembeli lain.
+ */
+const CHECKOUT_TX = { maxWait: 10_000, timeout: 25_000 } as const;
+
 @Injectable()
 export class OrderService {
   private readonly historyCachePrefix = 'orders:history:';
@@ -282,7 +297,7 @@ export class OrderService {
       });
 
       return newOrder;
-    });
+    }, CHECKOUT_TX);
 
     // Invalidate Cart Cache
     await this.cache.delete(`cart:active:${userId}`);
@@ -481,7 +496,7 @@ export class OrderService {
       });
 
       return newOrder;
-    });
+    }, CHECKOUT_TX);
 
     await this.invalidateHistory(userId);
 
