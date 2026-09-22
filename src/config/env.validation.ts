@@ -51,6 +51,16 @@ class EnvironmentVariables {
    * seluruh API. StorageService memperingatkan saat start lalu menjawab 503
    * kalau ada yang mencoba mengunggah.
    */
+  /**
+   * Menit sebelum tagihan Midtrans kedaluwarsa. Kosong = 3 menit.
+   *
+   * Opsional, dan nilai yang tidak masuk akal ditolak di service alih-alih
+   * di sini — supaya salah ketik tidak menjatuhkan seluruh API saat start.
+   */
+  @IsString()
+  @IsOptional()
+  MIDTRANS_EXPIRY_MINUTES?: string;
+
   @IsString()
   @IsOptional()
   CLOUDINARY_CLOUD_NAME?: string;

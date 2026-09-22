@@ -67,7 +67,12 @@ function build(over: Record<string, unknown> = {}) {
     delete: jest.fn().mockResolvedValue(undefined),
     deletePattern: jest.fn().mockResolvedValue(undefined),
   };
-  const svc = new PaymentService(prisma as never, midtrans as never, cache as never);
+  const svc = new PaymentService(
+    prisma as never,
+    midtrans as never,
+    cache as never,
+    { get: () => '3' } as never,
+  );
   return { svc, prisma, midtrans, payment };
 }
 
@@ -133,6 +138,17 @@ describe('membuat transaksi', () => {
     await svc.create(OWNER, 'order-1', 'QRIS');
     expect(midtrans.charge.mock.calls[0][0].transaction_details.order_id)
       .toMatch(/^KOMIT-/);
+  });
+
+  it('menyertakan masa berlaku 3 menit', async () => {
+    const { svc, midtrans } = ready();
+    await svc.create(OWNER, 'order-1', 'QRIS');
+    const sent = midtrans.charge.mock.calls[0][0];
+    expect(sent.custom_expiry).toEqual({ expiry_duration: 3, unit: 'minute' });
+    // `order_time` sengaja tidak dikirim: formatnya menuntut zona waktu
+    // eksplisit, dan jam server yang meleset membuat Midtrans menolak
+    // seluruh transaksi.
+    expect(sent.custom_expiry).not.toHaveProperty('order_time');
   });
 
   it('QRIS dikirim sebagai payment_type qris', async () => {

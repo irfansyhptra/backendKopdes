@@ -217,3 +217,31 @@ describe('buildMidtransOrderId', () => {
     expect(a).not.toBe(b);
   });
 });
+
+/**
+ * Masa berlaku tagihan.
+ *
+ * Nilai yang tidak masuk akal tidak boleh sampai ke Midtrans: `0` di sana
+ * membuat tagihan kedaluwarsa sebelum sempat dibuka pembeli.
+ */
+describe('readExpiryMinutes', () => {
+  it('angka yang wajar dipakai apa adanya', () => {
+    expect(PaymentService.readExpiryMinutes('3')).toBe(3);
+    expect(PaymentService.readExpiryMinutes('60')).toBe(60);
+  });
+
+  it('kosong atau tak disetel jatuh ke bawaan', () => {
+    expect(PaymentService.readExpiryMinutes(undefined)).toBe(3);
+    expect(PaymentService.readExpiryMinutes('')).toBe(3);
+  });
+
+  it('nol dan negatif ditolak', () => {
+    expect(PaymentService.readExpiryMinutes('0')).toBe(3);
+    expect(PaymentService.readExpiryMinutes('-5')).toBe(3);
+  });
+
+  it('bukan angka ditolak', () => {
+    expect(PaymentService.readExpiryMinutes('tiga')).toBe(3);
+    expect(PaymentService.readExpiryMinutes('abc')).toBe(3);
+  });
+});

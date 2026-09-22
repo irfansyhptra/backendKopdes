@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { OrderStatus, PaymentStatus, Prisma } from '@prisma/client';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../database/prisma.service';
 import { CacheService } from '../../cache/cache.service';
 import { MidtransService } from './midtrans.service';
@@ -49,11 +50,42 @@ export interface PaymentSnapshot extends NormalizedCharge {
 export class PaymentService {
   private readonly logger = new Logger(PaymentService.name);
 
+  /**
+   * Menit sebelum tagihan kedaluwarsa.
+   *
+   * Dapat disetel lewat `MIDTRANS_EXPIRY_MINUTES`. Nilainya dipakai untuk
+   * SEMUA metode — termasuk Virtual Account, yang di dunia nyata butuh lebih
+   * lama karena pembeli harus membuka aplikasi banknya dan menelusuri menu.
+   * Kalau nanti pembayaran VA mulai sering kedaluwarsa, naikkan nilai ini.
+   */
+  private readonly expiryMinutes: number;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly midtrans: MidtransService,
     private readonly cache: CacheService,
-  ) {}
+    config?: ConfigService,
+  ) {
+    this.expiryMinutes = PaymentService.readExpiryMinutes(
+      config?.get<string>('MIDTRANS_EXPIRY_MINUTES'),
+    );
+  }
+
+  /**
+   * Membaca masa berlaku dari konfigurasi.
+   *
+   * Nilai yang tidak masuk akal — kosong, bukan angka, nol, atau negatif —
+   * jatuh ke 3 menit alih-alih diteruskan ke Midtrans. Angka nol di sana
+   * membuat tagihan kedaluwarsa sebelum sempat dibuka.
+   */
+  static readonly DEFAULT_EXPIRY_MINUTES = 3;
+
+  static readExpiryMinutes(raw: string | undefined): number {
+    const n = Number.parseInt(raw ?? '', 10);
+    return Number.isFinite(n) && n > 0
+      ? n
+      : PaymentService.DEFAULT_EXPIRY_MINUTES;
+  }
 
   /** `KOMIT-{orderId}-{timestamp}` — unik dan mudah ditelusuri balik. */
   static buildMidtransOrderId(orderId: string, now = Date.now()): string {
@@ -176,6 +208,23 @@ export class PaymentService {
       transaction_details: {
         order_id: midtransOrderId,
         gross_amount: grossAmount,
+      },
+      /**
+       * Masa berlaku tagihan.
+       *
+       * Tanpa ini Midtrans memakai bawaannya sendiri — 15 menit untuk QRIS,
+       * 24 jam untuk Virtual Account — dan keduanya terlalu lama untuk
+       * dipantau di layar konfirmasi.
+       *
+       * `order_time` sengaja tidak dikirim: formatnya menuntut zona waktu
+       * eksplisit (`+0700`), dan jam server yang meleset sedikit saja
+       * membuat Midtrans menolak seluruh transaksi. Dikosongkan berarti
+       * Midtrans menghitung dari waktu terimanya sendiri, yang justru lebih
+       * tepat.
+       */
+      custom_expiry: {
+        expiry_duration: this.expiryMinutes,
+        unit: 'minute',
       },
       customer_details: {
         first_name: customer?.name ?? 'Pelanggan',
