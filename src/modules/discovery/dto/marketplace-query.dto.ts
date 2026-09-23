@@ -79,6 +79,22 @@ export class MarketplaceQueryDto {
   @IsOptional()
   inStock?: boolean;
 
+  /// Hanya produk yang sedang diskon. Kolom `discountPrice` hanya ada pada
+  /// produk Kopdes, jadi nilai true otomatis mengecualikan produk mitra.
+  @Transform(toBoolean)
+  @IsBoolean()
+  @IsOptional()
+  discounted?: boolean;
+
+  /// Rating rata-rata minimum. Disaring setelah penggabungan karena rating
+  /// adalah hasil agregasi ulasan, bukan kolom pada tabel produk.
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(5)
+  @IsOptional()
+  minRating?: number;
+
   @Type(() => Number)
   @IsInt()
   @Min(1)

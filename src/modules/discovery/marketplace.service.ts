@@ -23,6 +23,9 @@ export interface MergedProduct {
   sellerId: string | null;
   sellerName: string;
   source: 'KOPDES' | 'UMKM';
+  /// Harga coret. Null = tidak sedang diskon. Kolomnya hanya ada pada produk
+  /// Kopdes; produk mitra selalu null.
+  discountPrice: number | null;
   createdAt: Date;
   latitude: number | null;
   longitude: number | null;
@@ -62,6 +65,11 @@ export class MarketplaceService {
       );
     }
 
+    // Produk mitra tidak punya kolom harga coret, jadi permintaan "hanya
+    // diskon" tidak mungkin dijawab olehnya — tabelnya dilewati, bukan
+    // diambil lalu dibuang.
+    const skipUmkm = sellerType === 'KOPDES' || query.discounted === true;
+
     // Batas atas pengambilan per tabel: cukup untuk mengisi halaman yang
     // diminta setelah penggabungan, tanpa memindai seluruh tabel.
     const fetchLimit = page * limit;
@@ -82,6 +90,7 @@ export class MarketplaceService {
                 id: true,
                 name: true,
                 price: true,
+                discountPrice: true,
                 stock: true,
                 categoryId: true,
                 createdAt: true,
@@ -100,7 +109,7 @@ export class MarketplaceService {
                 },
               },
             }),
-        sellerType === 'KOPDES'
+        skipUmkm
           ? []
           : this.prisma.uMKMProduct.findMany({
               where: this.umkmWhere(query),
@@ -131,7 +140,7 @@ export class MarketplaceService {
         sellerType === 'UMKM'
           ? 0
           : this.prisma.product.count({ where: this.koperasiWhere(query) }),
-        sellerType === 'KOPDES'
+        skipUmkm
           ? 0
           : this.prisma.uMKMProduct.count({ where: this.umkmWhere(query) }),
       ]);
@@ -154,6 +163,7 @@ export class MarketplaceService {
         id: p.id,
         name: p.name,
         price: Number(p.price),
+        discountPrice: p.discountPrice === null ? null : Number(p.discountPrice),
         stock: p.stock,
         imageUrl: p.images[0]?.url ?? null,
         categoryId: p.categoryId,
@@ -174,6 +184,7 @@ export class MarketplaceService {
         imageUrl: p.images[0]?.url ?? null,
         categoryId: p.categoryId,
         categoryName: p.category?.name ?? null,
+        discountPrice: null,
         sellerId: p.umkm?.id ?? null,
         sellerName: p.umkm?.businessName ?? 'Mitra UMKM',
         source: 'UMKM' as const,
@@ -209,11 +220,27 @@ export class MarketplaceService {
       );
     }
 
+    // Rating adalah hasil agregasi ulasan, bukan kolom produk, jadi tidak
+    // bisa ikut ke dalam WHERE — saringannya di sini, sebelum paginasi.
+    const minRating = query.minRating;
+    if (minRating !== undefined && minRating > 0) {
+      merged = merged.filter((i) => (i.rating.average ?? 0) >= minRating);
+    }
+
     merged.sort(this.comparator(sort));
 
-    // Pada pengurutan jarak, penyaringan radius terjadi setelah pengambilan,
-    // sehingga jumlah sebenarnya hanya diketahui dari hasil yang tersaring.
-    const total = wantsDistance ? merged.length : koperasiCount + umkmCount;
+    // Saringan yang berjalan setelah pengambilan (radius dan rating) membuat
+    // jumlah sebenarnya hanya diketahui dari hasil yang tersaring.
+    //
+    // ponytail: karena pengambilan dibatasi `page * limit` per tabel, total
+    // pada kedua jalur itu adalah batas bawah — daftar bisa berhenti lebih
+    // awal daripada katalog sesungguhnya. Ganti dengan satu view SQL bila
+    // katalognya tumbuh sampai ribuan baris.
+    const filteredAfterFetch =
+      wantsDistance || (minRating !== undefined && minRating > 0);
+    const total = filteredAfterFetch
+      ? merged.length
+      : koperasiCount + umkmCount;
     const start = (page - 1) * limit;
 
     return {
@@ -230,6 +257,7 @@ export class MarketplaceService {
       isActive: true,
       ...(q.categoryId ? { categoryId: q.categoryId } : {}),
       ...(q.inStock === true ? { stock: { gt: 0 } } : {}),
+      ...(q.discounted === true ? { discountPrice: { not: null } } : {}),
       ...this.priceWhere(q),
       ...(q.search
         ? { name: { contains: q.search, mode: Prisma.QueryMode.insensitive } }
