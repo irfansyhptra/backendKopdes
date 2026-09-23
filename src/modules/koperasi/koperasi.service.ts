@@ -4,6 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
+import { MembershipStatus, Prisma } from '@prisma/client';
+
 import { PrismaService } from '../../database/prisma.service';
 import {
   boundingBox,
@@ -15,9 +17,10 @@ import {
   summarize,
   toRatingMap,
 } from '../../common/rating/rating.util';
-import { isOpenNow } from './opening-hours.util';
+import { isOpenNow, normalizeOperatingHours } from './opening-hours.util';
 import { KoperasiQueryDto } from './dto/koperasi-query.dto';
 import { NearbyQueryDto } from './dto/nearby-query.dto';
+import { UpdateKopdesProfileDto } from './dto/membership.dto';
 
 /** Kolom yang dikirim ke card beranda. Sengaja tidak menyertakan relasi berat. */
 const CARD_SELECT = {
@@ -180,7 +183,14 @@ export class KoperasiService {
       select: {
         ...CARD_SELECT,
         postalCode: true,
-        _count: { select: { products: true, umkms: true } },
+        _count: {
+          select: {
+            products: true,
+            umkms: true,
+            // Hanya yang aktif: pendaftar yang menunggu belum anggota.
+            members: { where: { status: MembershipStatus.ACTIVE } },
+          },
+        },
       },
     });
 
@@ -199,8 +209,56 @@ export class KoperasiService {
       isOpen: isOpenNow(koperasi.operatingHours),
       productCount: koperasi._count.products,
       umkmCount: koperasi._count.umkms,
+      memberCount: koperasi._count.members,
       rating: summarize(aggregate._avg.rating, aggregate._count.rating),
     };
+  }
+
+  /**
+   * Mengubah profil koperasi oleh pengurusnya.
+   *
+   * Alamat dan koordinat sengaja tidak bisa disentuh di sini: keduanya
+   * menentukan hasil pencarian terdekat dan siapa yang dianggap sedesa,
+   * jadi perubahannya lewat Super Admin.
+   */
+  async updateProfile(id: string, dto: UpdateKopdesProfileDto) {
+    const exists = await this.prisma.koperasi.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!exists) throw new NotFoundException('Koperasi tidak ditemukan.');
+
+    let operatingHours: Prisma.InputJsonValue | undefined;
+    if (dto.operatingHours !== undefined) {
+      try {
+        // Cast: Prisma menuntut bentuk JSON-nya sendiri, sedangkan hasil
+        // normalisasi sudah pasti objek yang bisa diserialisasi.
+        operatingHours = normalizeOperatingHours(
+          dto.operatingHours,
+        ) as unknown as Prisma.InputJsonValue;
+      } catch (error) {
+        throw new BadRequestException((error as Error).message);
+      }
+    }
+
+    return this.prisma.koperasi.update({
+      where: { id },
+      data: {
+        ...(dto.description !== undefined
+          ? { description: dto.description.trim() || null }
+          : {}),
+        ...(dto.phone !== undefined ? { phone: dto.phone.trim() || null } : {}),
+        ...(dto.serviceCategories !== undefined
+          ? {
+              serviceCategories: dto.serviceCategories
+                .map((s) => s.trim())
+                .filter(Boolean),
+            }
+          : {}),
+        ...(operatingHours !== undefined ? { operatingHours } : {}),
+      },
+      select: CARD_SELECT,
+    });
   }
 
   /// Ulasan terbaru untuk halaman detail.

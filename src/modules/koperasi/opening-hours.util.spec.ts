@@ -1,4 +1,4 @@
-import { isOpenNow } from './opening-hours.util';
+import { isOpenNow, normalizeOperatingHours } from './opening-hours.util';
 
 /** Membuat Date UTC yang setara dengan jam WIB tertentu pada hari tertentu. */
 function wib(day: number, hour: number, minute = 0): Date {
@@ -61,5 +61,44 @@ describe('isOpenNow', () => {
     expect(isOpenNow(JAM, new Date(Date.UTC(2026, 8, 6, 23, 0)))).toBe(false);
     // 01:00 UTC Senin = 08:00 WIB Senin → buka.
     expect(isOpenNow(JAM, new Date(Date.UTC(2026, 8, 7, 1, 0)))).toBe(true);
+  });
+});
+
+describe('normalisasi jam operasional', () => {
+  it('hari yang dikosongkan menjadi null, bukan hilang', () => {
+    const result = normalizeOperatingHours({
+      mon: { open: '07:00', close: '17:00' },
+    });
+    expect(result.mon).toEqual({ open: '07:00', close: '17:00' });
+    // Tujuh hari selalu ada, sehingga halaman publik bisa menggambar
+    // tabelnya tanpa menebak hari yang tidak disebut.
+    expect(Object.keys(result)).toHaveLength(7);
+    expect(result.sun).toBeNull();
+  });
+
+  it('menolak jam yang tidak berformat HH:MM', () => {
+    expect(() =>
+      normalizeOperatingHours({ mon: { open: '7 pagi', close: '17:00' } }),
+    ).toThrow();
+  });
+
+  it('menolak jam setengah terisi, bukan menganggapnya tutup', () => {
+    // Pengurus yang lupa mengisi jam tutup harus diberi tahu, bukan
+    // dibiarkan mengira tokonya tampil buka.
+    expect(() =>
+      normalizeOperatingHours({ mon: { open: '07:00' } as never }),
+    ).toThrow();
+  });
+
+  it('mengabaikan kunci yang bukan nama hari', () => {
+    const result = normalizeOperatingHours({
+      mon: null,
+      libur: { open: '07:00', close: '17:00' },
+    });
+    expect(result).not.toHaveProperty('libur');
+  });
+
+  it('null berarti belum diisi, hasilnya objek kosong', () => {
+    expect(normalizeOperatingHours(null)).toEqual({});
   });
 });

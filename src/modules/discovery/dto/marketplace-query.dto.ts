@@ -36,6 +36,12 @@ export class MarketplaceQueryDto {
   @IsOptional()
   categoryId?: string;
 
+  /// Menyaring ke satu koperasi: barang milik Kopdes itu sendiri dan barang
+  /// mitra UMKM yang bernaung di bawahnya. Halaman detail Kopdes memakainya.
+  @IsString()
+  @IsOptional()
+  kopdesId?: string;
+
   @IsIn(SELLER_TYPES)
   @IsOptional()
   sellerType?: SellerType = 'ALL';

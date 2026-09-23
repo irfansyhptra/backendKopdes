@@ -96,6 +96,18 @@ enum KopdesApplicationStatus {
   REJECTED
 }
 
+/// Status keanggotaan warga pada sebuah Kopdes.
+///
+/// Alurnya sama dengan verifikasi Mitra UMKM: warga mengajukan, Admin Kopdes
+/// yang memutuskan. Tidak ada jalur "langsung aktif" — keanggotaan koperasi
+/// menentukan siapa yang berhak atas layanan anggota, jadi harus diverifikasi
+/// manusia, bukan diberikan oleh formulir.
+enum MembershipStatus {
+  PENDING
+  ACTIVE
+  REJECTED
+}
+
 enum InventoryTransactionType {
   IN
   OUT
@@ -147,7 +159,8 @@ model Koperasi {
   products Product[]
   umkms    UMKM[]
   reviews  Review[]
-  staff    User[]    @relation("KopdesStaff")
+  staff    User[]             @relation("KopdesStaff")
+  members  KopdesMembership[]
 
   /// Pengajuan yang melahirkan koperasi ini, bila ia masuk lewat formulir.
   application KopdesApplication?
@@ -159,12 +172,12 @@ model Koperasi {
 }
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  password  String
-  name      String
-  phone     String?
-  role      Role     @default(CUSTOMER)
+  id       String  @id @default(uuid())
+  email    String  @unique
+  password String
+  name     String
+  phone    String?
+  role     Role    @default(CUSTOMER)
 
   /// Kopdes tempat staf (ADMIN_KOPDES / PEGAWAI_KOPDES) ditugaskan.
   /// Seluruh query operasional staf disaring dengan kolom ini — tanpa itu
@@ -197,6 +210,7 @@ model User {
   conversationsAsA      Conversation[]               @relation("ConvUser1")
   conversationsAsB      Conversation[]               @relation("ConvUser2")
   chatMessages          ChatMessage[]
+  memberships           KopdesMembership[]
 
   @@index([kopdesId])
 }
@@ -230,8 +244,8 @@ model Address {
 }
 
 model Category {
-  id          String   @id @default(uuid())
-  name        String   @unique
+  id          String  @id @default(uuid())
+  name        String  @unique
   description String?
 
   /// Menentukan baris filter mana yang menampilkan kategori ini di
@@ -249,16 +263,16 @@ model Category {
 }
 
 model Product {
-  id                  String    @id @default(uuid())
-  name                String
-  description         String
-  price               Decimal   @db.Decimal(12, 2)
-  stock               Int
-  categoryId          String
-  category            Category  @relation(fields: [categoryId], references: [id])
-  kopdesId            String?
-  kopdes              Koperasi? @relation(fields: [kopdesId], references: [id])
-  isActive            Boolean   @default(true)
+  id          String    @id @default(uuid())
+  name        String
+  description String
+  price       Decimal   @db.Decimal(12, 2)
+  stock       Int
+  categoryId  String
+  category    Category  @relation(fields: [categoryId], references: [id])
+  kopdesId    String?
+  kopdes      Koperasi? @relation(fields: [kopdesId], references: [id])
+  isActive    Boolean   @default(true)
 
   /// Harga coret. Null = tidak sedang diskon. Decimal, bukan Float:
   /// nominal rupiah tidak boleh kehilangan presisi.
@@ -289,9 +303,9 @@ model Product {
   orderItems            OrderItem[]
   inventoryTransactions InventoryTransaction[]
 
+  @@unique([kopdesId, sku])
   @@index([kopdesId])
   @@index([isFeatured])
-  @@unique([kopdesId, sku])
 }
 
 model ProductImage {
@@ -333,9 +347,9 @@ model CartItem {
 }
 
 model Order {
-  id                String        @id @default(uuid())
-  customerId        String
-  customer          User          @relation("CustomerOrders", fields: [customerId], references: [id])
+  id         String @id @default(uuid())
+  customerId String
+  customer   User   @relation("CustomerOrders", fields: [customerId], references: [id])
 
   /// Nilai barang sebelum ongkir dan diskon.
   ///
@@ -552,21 +566,21 @@ model UMKM {
 }
 
 model UMKMProduct {
-  id                  String    @id @default(uuid())
-  umkmId              String
-  umkm                UMKM      @relation(fields: [umkmId], references: [id], onDelete: Cascade)
-  name                String
-  description         String
-  price               Decimal   @db.Decimal(12, 2)
-  stock               Int
-  categoryId          String
-  category            Category  @relation(fields: [categoryId], references: [id])
-  isApproved          Boolean   @default(false)
-  rejectionReason     String?
-  isActive            Boolean   @default(true)
+  id              String   @id @default(uuid())
+  umkmId          String
+  umkm            UMKM     @relation(fields: [umkmId], references: [id], onDelete: Cascade)
+  name            String
+  description     String
+  price           Decimal  @db.Decimal(12, 2)
+  stock           Int
+  categoryId      String
+  category        Category @relation(fields: [categoryId], references: [id])
+  isApproved      Boolean  @default(false)
+  rejectionReason String?
+  isActive        Boolean  @default(true)
 
   /// Ditandai admin sebagai "Produk UMKM Pilihan" di beranda.
-  isFeatured Boolean @default(false)
+  isFeatured          Boolean   @default(false)
   isPreOrderAllowed   Boolean   @default(false)
   preOrderAvailableAt DateTime?
   createdAt           DateTime  @default(now())
@@ -782,7 +796,6 @@ model ChatMessage {
   @@index([conversationId])
 }
 
-
 /// Pengajuan bergabung dari pengurus koperasi desa.
 ///
 /// Formulirnya publik — koperasi yang belum punya akun tentu belum bisa
@@ -793,6 +806,47 @@ model ChatMessage {
 /// Tidak ada kolom kata sandi di sini. Kata sandi dibuat saat pengajuan
 /// disetujui, ditampilkan satu kali kepada Super Admin untuk diteruskan,
 /// lalu hanya tersimpan sebagai hash di tabel User.
+/// Keanggotaan warga pada satu Kopdes.
+///
+/// Sengaja TIDAK menyimpan NIK. Untuk koperasi desa, nama, nomor telepon,
+/// dan alamat sudah cukup bagi pengurus yang mengenal warganya; menyimpan
+/// nomor identitas nasional menambah kewajiban perlindungan data yang tidak
+/// sebanding dengan manfaatnya di sini.
+model KopdesMembership {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  kopdesId String
+  kopdes   Koperasi @relation(fields: [kopdesId], references: [id], onDelete: Cascade)
+
+  /// Data pendaftaran. Disalin, bukan dirujuk dari User: nama dan alamat
+  /// akun bisa berubah kapan saja, sedangkan yang diverifikasi pengurus
+  /// adalah data saat pengajuan.
+  fullName String
+  phone    String
+  address  String
+
+  /// Catatan bebas dari pemohon, mis. dusun atau RT/RW.
+  note String?
+
+  status MembershipStatus @default(PENDING)
+
+  /// Alasan penolakan, atau catatan pengurus saat menyetujui.
+  reviewNote   String?
+  reviewedAt   DateTime?
+  reviewedById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Satu warga satu keanggotaan per koperasi. Tanpa ini tombol "Daftar"
+  /// yang ditekan dua kali membuat dua pengajuan yang harus ditolak manual.
+  @@unique([userId, kopdesId])
+  @@index([kopdesId, status])
+}
+
 model KopdesApplication {
   id String @id @default(uuid())
 

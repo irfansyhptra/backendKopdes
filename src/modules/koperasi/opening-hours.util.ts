@@ -8,7 +8,15 @@
  * dipakai sebagai filter query.
  */
 
-const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
+export const DAY_KEYS = [
+  'sun',
+  'mon',
+  'tue',
+  'wed',
+  'thu',
+  'fri',
+  'sat',
+] as const;
 
 /** Zona waktu operasional koperasi. WIB = UTC+7. */
 const WIB_OFFSET_MINUTES = 7 * 60;
@@ -63,4 +71,50 @@ export function isOpenNow(
     return nowMinutes >= openMinutes || nowMinutes < closeMinutes;
   }
   return nowMinutes >= openMinutes && nowMinutes < closeMinutes;
+}
+
+/**
+ * Membersihkan `operatingHours` yang dikirim pengurus.
+ *
+ * Mengembalikan objek yang hanya berisi tujuh kunci hari yang dikenal, atau
+ * melempar bila ada jam yang tidak bisa dibaca. Divalidasi di sini, bukan di
+ * DTO: bentuknya objek bebas, dan class-validator hanya bisa memeriksa satu
+ * field pada satu waktu.
+ *
+ * `null` pada sebuah hari berarti tutup. Hari yang dikirim sebagai objek
+ * tanpa jam yang sah ditolak, bukan diam-diam dianggap tutup — pengurus akan
+ * berpikir tokonya tampil buka padahal tidak.
+ */
+export function normalizeOperatingHours(
+  value: unknown,
+): Record<string, DayHours | null> {
+  if (value === null || value === undefined) return {};
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Jam operasional harus berupa objek per hari.');
+  }
+
+  const out: Record<string, DayHours | null> = {};
+  for (const key of DAY_KEYS) {
+    const day = (value as Record<string, unknown>)[key];
+    if (day === null || day === undefined) {
+      out[key] = null;
+      continue;
+    }
+    if (typeof day !== 'object') {
+      throw new Error(`Jam operasional hari ${key} tidak valid.`);
+    }
+    const { open, close } = day as Partial<DayHours>;
+    if (
+      typeof open !== 'string' ||
+      typeof close !== 'string' ||
+      parseTime(open) === null ||
+      parseTime(close) === null
+    ) {
+      throw new Error(
+        `Jam buka dan tutup hari ${key} harus berformat HH:MM.`,
+      );
+    }
+    out[key] = { open: open.trim(), close: close.trim() };
+  }
+  return out;
 }

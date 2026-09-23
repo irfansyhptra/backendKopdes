@@ -50,6 +50,10 @@ export const Permission = {
   // Koperasi
   KOPDES_POLICY_MANAGE: 'kopdes:policy:manage',
 
+  /// Memverifikasi pendaftaran anggota koperasi — menerima atau menolak
+  /// warga yang mendaftar lewat halaman Kopdes.
+  MEMBER_MANAGE: 'member:manage',
+
   /**
    * Mengelola akun pegawai di dalam Kopdes sendiri.
    *
@@ -103,6 +107,9 @@ const ADMIN_DEFAULTS: PermissionKey[] = [
   Permission.UMKM_LOCATION_UPDATE,
   Permission.AI_EXECUTIVE,
   Permission.KOPDES_POLICY_MANAGE,
+  // Keanggotaan menentukan siapa yang berhak atas layanan anggota, jadi
+  // keputusannya ada di pemilik koperasi, bukan pegawai harian.
+  Permission.MEMBER_MANAGE,
   // Admin Kopdes adalah pemilik koperasinya: ia yang mengangkat pegawainya
   // sendiri. Lingkupnya dijaga di service, bukan di sini.
   Permission.STAFF_MANAGE,

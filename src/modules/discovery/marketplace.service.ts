@@ -256,6 +256,7 @@ export class MarketplaceService {
     return {
       isActive: true,
       ...(q.categoryId ? { categoryId: q.categoryId } : {}),
+      ...(q.kopdesId ? { kopdesId: q.kopdesId } : {}),
       ...(q.inStock === true ? { stock: { gt: 0 } } : {}),
       ...(q.discounted === true ? { discountPrice: { not: null } } : {}),
       ...this.priceWhere(q),
@@ -269,7 +270,12 @@ export class MarketplaceService {
     return {
       isActive: true,
       isApproved: true,
-      umkm: { status: UMKMStatus.ACTIVE },
+      // Mitra ikut tersaring lewat koperasi tempatnya bernaung: halaman
+      // sebuah Kopdes menampilkan etalase desanya, bukan hanya rak sendiri.
+      umkm: {
+        status: UMKMStatus.ACTIVE,
+        ...(q.kopdesId ? { kopdesId: q.kopdesId } : {}),
+      },
       ...(q.categoryId ? { categoryId: q.categoryId } : {}),
       ...(q.inStock === true ? { stock: { gt: 0 } } : {}),
       ...this.priceWhere(q),
