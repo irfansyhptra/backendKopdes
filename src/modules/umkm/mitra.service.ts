@@ -18,6 +18,7 @@ import {
 } from '../../common/rating/rating.util';
 import { isOpenNow } from '../koperasi/opening-hours.util';
 import { MitraNearbyQueryDto } from './dto/mitra-nearby-query.dto';
+import { MitraListQueryDto } from './dto/mitra-list-query.dto';
 
 /// Hanya kolom yang dipakai card. Relasi produk sengaja tidak di-include.
 const CARD_SELECT = {
@@ -107,6 +108,55 @@ export class MitraService {
 
     return {
       umkm: ranked.slice(start, start + limit),
+      total,
+      page,
+      limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
+  }
+
+  /**
+   * Mitra di bawah satu koperasi, tanpa konteks lokasi.
+   *
+   * Paginasinya di database — berbeda dengan [findNearby], yang harus
+   * mengambil kandidat dulu karena jaraknya baru diketahui setelah dihitung.
+   */
+  async findAll(query: MitraListQueryDto) {
+    const { page = 1, limit = 20 } = query;
+    const where = {
+      status: UMKMStatus.ACTIVE,
+      ...(query.kopdesId ? { kopdesId: query.kopdesId } : {}),
+      ...(query.category ? { category: query.category } : {}),
+      ...(query.search
+        ? {
+            businessName: {
+              contains: query.search,
+              mode: 'insensitive' as const,
+            },
+          }
+        : {}),
+    };
+
+    const [rows, total] = await Promise.all([
+      this.prisma.uMKM.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { businessName: 'asc' },
+        select: { ...CARD_SELECT, _count: { select: { products: true } } },
+      }),
+      this.prisma.uMKM.count({ where }),
+    ]);
+
+    const ratings = await this.ratingsFor(rows.map((m) => m.id));
+
+    return {
+      umkm: rows.map((m) => ({
+        ...m,
+        isOpen: isOpenNow(m.operatingHours),
+        productCount: m._count.products,
+        rating: ratings.get(m.id) ?? EMPTY_RATING,
+      })),
       total,
       page,
       limit,
