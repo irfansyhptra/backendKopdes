@@ -1,5 +1,6 @@
 import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
 import { PaymentService } from './payment.service';
+import { WalletService } from '../wallet/wallet.service';
 import type { MidtransNotification } from './midtrans.types';
 
 /**
@@ -14,15 +15,25 @@ import type { MidtransNotification } from './midtrans.types';
  * tanda tangannya tidak akan menjadi benar pada percobaan kedua — menjawab
  * 4xx hanya membuatnya berdatangan berhari-hari. Alasan penolakan dicatat di
  * `PaymentWebhookEvent` untuk ditelusuri.
+ *
+ * Satu URL melayani dua jenis transaksi: pembayaran pesanan (`KOMIT-…`) dan
+ * isi ulang saldo (`TOPUP-…`). Midtrans hanya memanggil satu Notification
+ * URL, jadi perutean dikerjakan di sini berdasarkan awalan `order_id` —
+ * bukan dengan mendaftarkan URL kedua yang bisa lupa dikonfigurasi.
  */
 @Controller('payments/midtrans')
 export class MidtransWebhookController {
-  constructor(private readonly payments: PaymentService) {}
+  constructor(
+    private readonly payments: PaymentService,
+    private readonly wallet: WalletService,
+  ) {}
 
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
   async webhook(@Body() notification: MidtransNotification) {
-    const result = await this.payments.handleNotification(notification);
+    const result = WalletService.isTopUpOrderId(notification.order_id ?? '')
+      ? await this.wallet.handleTopUpNotification(notification)
+      : await this.payments.handleNotification(notification);
     return { success: true, ...result };
   }
 }

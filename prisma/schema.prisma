@@ -96,6 +96,28 @@ enum KopdesApplicationStatus {
   REJECTED
 }
 
+/// Jenis mutasi saldo. Menentukan tanda nominalnya, bukan menggantikannya:
+/// `amount` tetap ditulis bertanda, sehingga penjumlahan seluruh entri selalu
+/// sama dengan saldo tanpa perlu tahu artinya tiap jenis.
+enum WalletEntryType {
+  /// Isi ulang yang sudah lunas di Midtrans.
+  TOPUP
+  /// Pembayaran pesanan memakai saldo.
+  PAYMENT
+  /// Pengembalian dana pesanan yang batal.
+  REFUND
+  /// Koreksi manual oleh Super Admin. Selalu meninggalkan alasan.
+  ADJUSTMENT
+}
+
+/// Status pengisian saldo, mengikuti siklus transaksi Midtrans.
+enum TopUpStatus {
+  PENDING
+  PAID
+  EXPIRED
+  FAILED
+}
+
 /// Status keanggotaan warga pada sebuah Kopdes.
 ///
 /// Alurnya sama dengan verifikasi Mitra UMKM: warga mengajukan, Admin Kopdes
@@ -211,6 +233,7 @@ model User {
   conversationsAsB      Conversation[]               @relation("ConvUser2")
   chatMessages          ChatMessage[]
   memberships           KopdesMembership[]
+  wallet                Wallet?
 
   @@index([kopdesId])
 }
@@ -812,6 +835,92 @@ model ChatMessage {
 /// dan alamat sudah cukup bagi pengurus yang mengenal warganya; menyimpan
 /// nomor identitas nasional menambah kewajiban perlindungan data yang tidak
 /// sebanding dengan manfaatnya di sini.
+/// Dompet saldo milik seorang pengguna.
+///
+/// `balance` adalah **cache**, bukan sumber kebenaran: nilainya selalu sama
+/// dengan jumlah seluruh `WalletEntry` dan hanya boleh diubah di dalam
+/// transaksi yang sekaligus menulis entrinya. Menyimpan saldo sebagai kolom
+/// yang ditambah-kurangi sendiri adalah cara paling umum uang menghilang —
+/// satu kegagalan di tengah dan tidak ada jejak untuk merekonstruksinya.
+model Wallet {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Decimal, bukan Float: rupiah tidak boleh melewati floating point.
+  balance Decimal @default(0) @db.Decimal(14, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  entries WalletEntry[]
+  topUps  WalletTopUp[]
+}
+
+/// Satu baris buku besar. Tidak pernah diubah maupun dihapus setelah dibuat —
+/// koreksi dilakukan dengan menambah entri lawan, bukan menimpa yang lama.
+model WalletEntry {
+  id       String @id @default(uuid())
+  walletId String
+  wallet   Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  /// Bertanda: positif menambah saldo, negatif mengurangi.
+  amount Decimal @db.Decimal(14, 2)
+
+  /// Saldo sesudah entri ini. Disimpan supaya selisih pembukuan bisa
+  /// ditelusuri ke baris tepatnya, bukan dihitung ulang dari nol.
+  balanceAfter Decimal @db.Decimal(14, 2)
+
+  type        WalletEntryType
+  description String?
+
+  /// Asal-usul entri: `topup`, `order`, `manual`. Dipakai untuk menautkan
+  /// kembali ke sumbernya saat rekonsiliasi.
+  referenceType String?
+  referenceId   String?
+
+  /// Kunci anti-ganda. Webhook Midtrans bisa datang lebih dari sekali untuk
+  /// transaksi yang sama; tanpa kunci ini saldo bertambah dua kali.
+  idempotencyKey String? @unique
+
+  createdAt DateTime @default(now())
+
+  @@index([walletId, createdAt])
+}
+
+/// Pengisian saldo lewat Midtrans.
+///
+/// Terpisah dari `Payment`, yang selalu terikat sebuah pesanan. Isi ulang
+/// tidak punya pesanan, dan memaksakan `orderId` nullable di sana akan
+/// melemahkan jaminan jalur checkout yang sudah jalan.
+model WalletTopUp {
+  id       String @id @default(uuid())
+  walletId String
+  wallet   Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  amount Decimal     @db.Decimal(14, 2)
+  status TopUpStatus @default(PENDING)
+
+  /// `TOPUP-{id}-{unix}` — dipakai Midtrans, unik, dan bisa ditelusuri balik.
+  midtransOrderId   String        @unique
+  paymentMethod     PaymentMethod
+  transactionId     String?
+  transactionStatus String?
+  fraudStatus       String?
+
+  /// Jawaban mentah Midtrans: nomor VA, QR, atau tautan pembayaran.
+  actions Json?
+
+  expiresAt DateTime?
+  paidAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([walletId, createdAt])
+  @@index([status])
+}
+
 model KopdesMembership {
   id String @id @default(uuid())
 
