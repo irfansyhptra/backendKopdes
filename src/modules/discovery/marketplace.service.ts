@@ -70,6 +70,10 @@ export class MarketplaceService {
     // diambil lalu dibuang.
     const skipUmkm = sellerType === 'KOPDES' || query.discounted === true;
 
+    // Etalase satu kedai: tabel produk Kopdes tidak punya pemilik UMKM, jadi
+    // ia dilewati sama sekali — bukan diambil lalu tidak cocok apa pun.
+    const skipKopdes = sellerType === 'UMKM' || !!query.umkmId;
+
     // Batas atas pengambilan per tabel: cukup untuk mengisi halaman yang
     // diminta setelah penggabungan, tanpa memindai seluruh tabel.
     const fetchLimit = page * limit;
@@ -80,7 +84,7 @@ export class MarketplaceService {
     // infinite scroll berhenti sebelum katalog habis.
     const [koperasiRows, umkmRows, koperasiCount, umkmCount] =
       await Promise.all([
-        sellerType === 'UMKM'
+        skipKopdes
           ? []
           : this.prisma.product.findMany({
               where: this.koperasiWhere(query),
@@ -137,7 +141,7 @@ export class MarketplaceService {
                 },
               },
             }),
-        sellerType === 'UMKM'
+        skipKopdes
           ? 0
           : this.prisma.product.count({ where: this.koperasiWhere(query) }),
         skipUmkm
@@ -272,6 +276,7 @@ export class MarketplaceService {
       isApproved: true,
       // Mitra ikut tersaring lewat koperasi tempatnya bernaung: halaman
       // sebuah Kopdes menampilkan etalase desanya, bukan hanya rak sendiri.
+      ...(q.umkmId ? { umkmId: q.umkmId } : {}),
       umkm: {
         status: UMKMStatus.ACTIVE,
         ...(q.kopdesId ? { kopdesId: q.kopdesId } : {}),

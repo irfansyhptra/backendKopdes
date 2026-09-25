@@ -391,6 +391,122 @@ export class DeliveryService {
   }
 
   // 4. Track Kurir GPS location
+  /**
+   * Posisi kurir untuk satu pesanan, dibaca pelanggannya.
+   *
+   * Kurir sudah mengirim koordinat sejak awal, tetapi tidak ada satu pun
+   * jalur untuk membacanya — jadi "live tracking" berhenti di tabel. Ini
+   * pasangan bacanya.
+   *
+   * Yang boleh melihat: pemilik pesanan, pengurus Kopdes asal pesanan, dan
+   * kurir yang ditugaskan. Selain itu 404, bukan 403: keberadaan pesanan
+   * orang lain pun bukan urusannya.
+   *
+   * Yang dikirim hanya titik terakhir beserta waktunya, bukan seluruh jejak.
+   * Riwayat lengkap perjalanan kurir adalah data pergerakan seseorang, dan
+   * pelanggan tidak membutuhkannya untuk tahu pesanannya di mana.
+   */
+  async getTrackingForOrder(
+    orderId: string,
+    user: { id: string; role: Role; kopdesId: string | null },
+  ) {
+    const isStaff =
+      user.role === Role.ADMIN_KOPDES || user.role === Role.PEGAWAI_KOPDES;
+
+    // `Order` tidak menyimpan kopdesId sendiri; kepemilikan desanya
+    // ditelusuri lewat barisnya, sama seperti `OrderService.kopdesScope`.
+    // Dipakai sebagai bagian dari WHERE, bukan diperiksa setelahnya, supaya
+    // pesanan desa lain tidak pernah terbaca sekalipun sesaat.
+    const kopdesScope: Prisma.OrderWhereInput =
+      isStaff && user.kopdesId
+        ? {
+            items: {
+              some: {
+                OR: [
+                  { product: { kopdesId: user.kopdesId } },
+                  { umkmProduct: { umkm: { kopdesId: user.kopdesId } } },
+                ],
+              },
+            },
+          }
+        : {};
+
+    const delivery = await this.prisma.delivery.findFirst({
+      where: {
+        orderId,
+        // Super Admin lintas desa; selain itu harus punya hubungan dengan
+        // pesanannya — pemilik, kurir yang ditugaskan, atau pengurus desanya.
+        ...(user.role === Role.SUPER_ADMIN
+          ? {}
+          : {
+              OR: [
+                { order: { customerId: user.id } },
+                { courierId: user.id },
+                ...(isStaff && user.kopdesId ? [{ order: kopdesScope }] : []),
+              ],
+            }),
+      },
+      select: {
+        id: true,
+        status: true,
+        courierId: true,
+        courierMarkedDeliveredAt: true,
+        customerConfirmedAt: true,
+        estimatedDeliveryTime: true,
+        actualDeliveryTime: true,
+        courier: { select: { id: true, name: true, phone: true } },
+        order: {
+          select: {
+            id: true,
+            deliveryAddress: {
+              select: {
+                title: true,
+                recipientName: true,
+                street: true,
+                city: true,
+              },
+            },
+          },
+        },
+        locations: {
+          orderBy: { recordedAt: 'desc' },
+          take: 1,
+          select: { latitude: true, longitude: true, recordedAt: true },
+        },
+      },
+    });
+
+    // 404, bukan 403: keberadaan pesanan orang lain pun bukan urusannya.
+    if (!delivery) {
+      throw new NotFoundException('Pengantaran tidak ditemukan.');
+    }
+
+    const order = delivery.order;
+
+    const last = delivery.locations[0] ?? null;
+
+    return {
+      deliveryId: delivery.id,
+      orderId: order.id,
+      status: delivery.status,
+      courier: delivery.courier,
+      estimatedDeliveryTime: delivery.estimatedDeliveryTime,
+      actualDeliveryTime: delivery.actualDeliveryTime,
+      courierMarkedDeliveredAt: delivery.courierMarkedDeliveredAt,
+      customerConfirmedAt: delivery.customerConfirmedAt,
+      /// Tujuan pengantaran sebagai teks.
+      ///
+      /// `Address` belum menyimpan koordinat, jadi klien tidak bisa menggambar
+      /// garis kurir→tujuan maupun memvalidasi jarak saat penerimaan — padahal
+      /// itulah yang dijanjikan "delivery dual-validation". Menambah
+      /// lat/lng ke alamat adalah pekerjaan tersendiri.
+      destination: order.deliveryAddress,
+      /// `null` berarti kurir belum mengirim posisi sama sekali — berbeda
+      /// dari koordinat 0,0 yang akan menaruhnya di Teluk Guinea.
+      lastLocation: last,
+    };
+  }
+
   async updateCourierLocation(
     deliveryId: string,
     courierId: string,

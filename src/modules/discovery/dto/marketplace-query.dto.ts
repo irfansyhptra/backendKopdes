@@ -42,6 +42,12 @@ export class MarketplaceQueryDto {
   @IsOptional()
   kopdesId?: string;
 
+  /// Menyaring ke satu Mitra UMKM: etalase satu kedai. Produk Kopdes tidak
+  /// pernah ikut, karena ia bukan milik mitra mana pun.
+  @IsString()
+  @IsOptional()
+  umkmId?: string;
+
   @IsIn(SELLER_TYPES)
   @IsOptional()
   sellerType?: SellerType = 'ALL';
