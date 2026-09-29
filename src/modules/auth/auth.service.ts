@@ -7,15 +7,28 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { ConfigService } from '@nestjs/config';
-import { Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { JwtHelper, PasswordHelper } from './helpers/crypto.helper';
 import { resolvePermissions } from '../../common/permissions';
 
-// Pendaftaran mandiri hanya untuk peran publik. Akun staf Kopdes
-// (ADMIN_KOPDES, PEGAWAI_KOPDES) & SUPER_ADMIN dibuat oleh Super Admin.
-const SELF_REGISTER_ROLES: Role[] = [Role.CUSTOMER, Role.UMKM, Role.COURIER];
+/**
+ * Hanya pembeli yang boleh mendaftar sendiri.
+ *
+ * UMKM dan kurir sempat ada di daftar ini, dan keduanya menghasilkan akun
+ * yang tidak bisa dipakai:
+ *
+ * - UMKM: tidak ada satu pun jalur yang membuat baris `UMKM` selain seed,
+ *   jadi akun berperan UMKM lahir tanpa profil usaha, tanpa Kopdes induk,
+ *   dan tanpa melewati verifikasi Admin Kopdes yang justru menjadi syarat
+ *   berjualan.
+ * - COURIER: kurir adalah staf Kopdes — dibuat lewat modul staf yang
+ *   sekaligus mengikatnya ke satu desa. Kurir yang mendaftar sendiri tidak
+ *   punya `kopdesId`, sehingga tidak pernah muncul di daftar kurir desa mana
+ *   pun dan tidak ada pesanan yang bisa diberikan kepadanya.
+ */
+const SELF_REGISTER_ROLES: Role[] = [Role.CUSTOMER];
 
 @Injectable()
 export class AuthService {
@@ -64,29 +77,54 @@ export class AuthService {
     const requestedRole = dto.role ?? Role.CUSTOMER;
     if (!SELF_REGISTER_ROLES.includes(requestedRole)) {
       throw new ForbiddenException(
-        'Peran ini tidak dapat mendaftar sendiri. Akun dibuat oleh Super Admin.',
+        'Pendaftaran mandiri hanya untuk akun pembeli. Mitra UMKM mengajukan ' +
+          'diri lewat Kopdes desanya, dan akun kurir maupun pegawai dibuat ' +
+          'oleh pengurus Kopdes.',
       );
     }
 
-    const existing = await this.prisma.user.findUnique({
-      where: { email: dto.email },
-    });
+    /**
+     * Email dinormalkan sebelum apa pun.
+     *
+     * `login` mencarinya dengan `mode: 'insensitive'`, sementara pemeriksaan
+     * duplikat di sini memakai indeks unik yang peka huruf besar-kecil.
+     * Tanpa normalisasi, "Budi@Mail.com" dan "budi@mail.com" lolos sebagai
+     * dua akun berbeda — lalu login mengembalikan salah satunya secara
+     * sembarang, dan pemilik akun yang lain tidak pernah bisa masuk.
+     */
+    const email = dto.email.trim().toLowerCase();
+
+    const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing) {
-      throw new ConflictException('Email already registered');
+      throw new ConflictException('Email sudah terdaftar');
     }
 
     const hashedPassword = PasswordHelper.hash(dto.password);
-    const user = await this.prisma.user.create({
-      data: {
-        email: dto.email,
-        password: hashedPassword,
-        name: dto.name,
-        phone: dto.phone,
-        role: requestedRole,
-      },
-    });
 
-    return this.generateAuthResponse(user);
+    try {
+      const user = await this.prisma.user.create({
+        data: {
+          email,
+          password: hashedPassword,
+          name: dto.name.trim(),
+          phone: dto.phone?.trim() || null,
+          role: requestedRole,
+        },
+      });
+
+      return this.generateAuthResponse(user);
+    } catch (e) {
+      // Dua pendaftaran serentak sama-sama lolos pemeriksaan di atas; yang
+      // kalah ditolak indeks unik. Itu tetap "email sudah terdaftar", bukan
+      // galat server.
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        throw new ConflictException('Email sudah terdaftar');
+      }
+      throw e;
+    }
   }
 
   async login(dto: LoginDto) {
