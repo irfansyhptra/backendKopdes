@@ -33,6 +33,88 @@ enum OrderStatus {
 /// bukan kode tiruan. Sisanya metode Midtrans yang aktif di akun merchant —
 /// yang belum aktif sengaja tidak didaftarkan di sini supaya tidak ada
 /// pilihan yang pasti gagal saat ditekan.
+/// Satuan jual.
+///
+/// Enum, bukan teks bebas: `unit` sebelumnya `String` dengan bawaan "pcs",
+/// dan dua Kopdes menulis "kg", "Kg", dan "kilogram" untuk barang yang sama —
+/// membuat ringkasan stok lintas desa tidak bisa dijumlahkan.
+enum ProductUnit {
+  PCS
+  PACK
+  BOX
+  DUS
+  SACHET
+  BOTOL
+  KALENG
+  RENTENG
+  LUSIN
+  IKAT
+  KARUNG
+  GRAM
+  KILOGRAM
+  MILILITER
+  LITER
+}
+
+/// Cara pembeli menerima barangnya.
+///
+/// Dipisah dari [PaymentMethod] karena keduanya memang dua keputusan: COD
+/// hanya masuk akal bersama pengantaran, sementara pembayaran di muka berlaku
+/// untuk keduanya. Gabungannya divalidasi di service, bukan diringkas jadi
+/// satu enum berisi tiga pilihan — kalau digabung, menambah satu metode bayar
+/// berarti menambah dua nilai enum lagi.
+enum FulfillmentMethod {
+  /// Barang disiapkan, pembeli mengambil sendiri di Kopdes.
+  PICKUP
+
+  /// Diantar kurir desa ke alamat pembeli.
+  DELIVERY
+}
+
+/// Varian jual sebuah produk — opsional.
+///
+/// Produk tanpa varian tetap sah: harga, stok, dan satuannya ada di
+/// [Product] itu sendiri. Varian dipakai ketika satu barang punya beberapa
+/// kemasan atau ukuran yang harganya berbeda, mis. kopi 250 g dan 1 kg.
+///
+/// [price], [stock], dan [unit] boleh null dan berarti "ikut produk induknya".
+/// Menyalin nilai induk ke tiap varian membuat perubahan harga harus ditulis
+/// di banyak baris, dan satu yang terlewat menjual barang dengan harga lama.
+model ProductVariant {
+  id        String  @id @default(uuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  /// Nama yang dibaca pembeli, mis. "250 g", "1 kg", "Merah".
+  name String
+
+  /// Kode internal Kopdes untuk varian ini. Unik per produk, bukan global.
+  sku String?
+
+  price Decimal?     @db.Decimal(12, 2)
+  stock Int?
+  unit  ProductUnit?
+
+  /// Foto khusus varian ini. Null berarti memakai foto produknya.
+  imageUrl String?
+
+  isActive Boolean @default(true)
+
+  /// Urutan tampil yang ditentukan pengurus; tanpa ini urutannya mengikuti
+  /// id acak dan berubah tiap permintaan.
+  sortOrder Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  cartItems  CartItem[]
+  orderItems OrderItem[]
+
+  @@unique([productId, name])
+  @@unique([productId, sku])
+  @@index([productId, isActive])
+}
+
 enum PaymentMethod {
   COD
   QRIS
@@ -301,8 +383,8 @@ model Product {
   /// nominal rupiah tidak boleh kehilangan presisi.
   discountPrice Decimal? @db.Decimal(12, 2)
 
-  /// Satuan jual yang tampil di samping harga, mis. "kg", "pcs", "liter".
-  unit String @default("pcs")
+  /// Satuan jual yang tampil di samping harga.
+  unit ProductUnit @default(PCS)
 
   /// Kode internal Kopdes. Unik per Kopdes, bukan global — dua desa boleh
   /// memakai kode yang sama untuk barang mereka masing-masing.
@@ -321,6 +403,7 @@ model Product {
   updatedAt           DateTime  @updatedAt
 
   images                ProductImage[]
+  variants              ProductVariant[]
   reviews               Review[]
   cartItems             CartItem[]
   orderItems            OrderItem[]
@@ -361,11 +444,18 @@ model CartItem {
   product       Product?     @relation(fields: [productId], references: [id])
   umkmProductId String?
   umkmProduct   UMKMProduct? @relation(fields: [umkmProductId], references: [id])
-  quantity      Int
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
 
-  @@unique([cartId, productId])
+  /// Varian yang dipilih. Null pada produk tanpa varian.
+  variantId String?
+  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+
+  quantity  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Kunci unik memuat varian: dua kemasan berbeda dari produk yang sama
+  /// adalah dua baris keranjang, bukan satu baris yang jumlahnya bertambah.
+  @@unique([cartId, productId, variantId])
   @@unique([cartId, umkmProductId])
 }
 
@@ -389,14 +479,23 @@ model Order {
 
   /// subtotal + shippingFee - discountAmount. Tetap disimpan agar nominal
   /// yang ditagihkan tidak pernah berubah kalau rumusnya direvisi nanti.
-  totalAmount       Decimal       @db.Decimal(12, 2)
-  status            OrderStatus   @default(PENDING)
-  paymentMethod     PaymentMethod
-  paymentStatus     PaymentStatus @default(PENDING)
+  totalAmount   Decimal       @db.Decimal(12, 2)
+  status        OrderStatus   @default(PENDING)
+  paymentMethod PaymentMethod
+  paymentStatus PaymentStatus @default(PENDING)
+
+  /// Cara pembeli menerima barangnya.
+  ///
+  /// Gabungannya dengan [paymentMethod] menghasilkan tiga pilihan yang
+  /// ditawarkan di aplikasi: bayar di muka + ambil sendiri, COD + diantar,
+  /// dan bayar di muka + diantar. COD + ambil sendiri ditolak service:
+  /// membayar di tempat saat mengambil sendiri sama saja dengan transaksi
+  /// kasir, yang punya alurnya sendiri.
+  fulfillment       FulfillmentMethod @default(DELIVERY)
   deliveryAddressId String
-  deliveryAddress   Address       @relation(fields: [deliveryAddressId], references: [id])
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
+  deliveryAddress   Address           @relation(fields: [deliveryAddressId], references: [id])
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
 
   items    OrderItem[]
   payment  Payment?
@@ -412,10 +511,20 @@ model OrderItem {
   product       Product?     @relation(fields: [productId], references: [id])
   umkmProductId String?
   umkmProduct   UMKMProduct? @relation(fields: [umkmProductId], references: [id])
-  quantity      Int
-  price         Decimal      @db.Decimal(12, 2)
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+
+  variantId String?
+  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+
+  /// Nama varian saat dipesan, dibekukan di sini.
+  ///
+  /// Varian bisa diubah namanya atau dinonaktifkan setelah pesanan dibuat;
+  /// invoice lama harus tetap menyebut apa yang benar-benar dibeli.
+  variantName String?
+
+  quantity  Int
+  price     Decimal  @db.Decimal(12, 2)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Invoice {

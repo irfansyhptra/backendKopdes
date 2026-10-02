@@ -5,9 +5,11 @@ import {
   IsInt,
   IsBoolean,
   IsDateString,
+  IsEnum,
   MaxLength,
   Min,
 } from 'class-validator';
+import { ProductUnit } from '@prisma/client';
 import { Type, Transform } from 'class-transformer';
 
 /** multipart/form-data mengirim boolean sebagai string; normalkan dulu. */
@@ -56,10 +58,11 @@ export class UpdateProductDto {
   @IsOptional()
   categoryId?: string;
 
-  @IsString()
-  @MaxLength(20)
+  /// Enum, bukan teks bebas: satuan yang diketik sendiri membuat "kg", "Kg",
+  /// dan "kilogram" jadi tiga satuan berbeda di ringkasan stok.
+  @IsEnum(ProductUnit)
   @IsOptional()
-  unit?: string;
+  unit?: ProductUnit;
 
   @IsString()
   @MaxLength(50)
@@ -79,6 +82,4 @@ export class UpdateProductDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
-
-
 }

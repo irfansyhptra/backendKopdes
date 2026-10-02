@@ -1,6 +1,15 @@
-import { IsString, IsNotEmpty, IsEnum, IsArray, ValidateNested, IsInt, Min, IsOptional } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsEnum,
+  IsArray,
+  ValidateNested,
+  IsInt,
+  Min,
+  IsOptional,
+} from 'class-validator';
 import { Type } from 'class-transformer';
-import { PaymentMethod } from '@prisma/client';
+import { FulfillmentMethod, PaymentMethod } from '@prisma/client';
 import { DeliveryAddressSelectionDto } from './delivery-address-selection.dto';
 
 export class CreateOrderItemDto {
@@ -11,6 +20,11 @@ export class CreateOrderItemDto {
   @IsString()
   @IsOptional()
   umkmProductId?: string;
+
+  /// Varian yang dipilih. Kosong pada produk tanpa varian.
+  @IsString()
+  @IsOptional()
+  variantId?: string;
 
   @Type(() => Number)
   @IsInt()
@@ -27,4 +41,11 @@ export class CreateOrderDto extends DeliveryAddressSelectionDto {
   @IsEnum(PaymentMethod)
   @IsNotEmpty()
   paymentMethod!: PaymentMethod;
+
+  /// Cara menerima barang. Bawaannya pengantaran, sama dengan kolomnya di
+  /// basis data, supaya klien lama yang belum mengirim field ini tetap
+  /// menghasilkan pesanan yang sama seperti sebelumnya.
+  @IsEnum(FulfillmentMethod)
+  @IsOptional()
+  fulfillment?: FulfillmentMethod;
 }

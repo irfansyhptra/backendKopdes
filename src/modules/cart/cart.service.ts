@@ -1,4 +1,8 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { CacheService } from '../../cache/cache.service';
 import { AddToCartDto } from './dto/add-to-cart.dto';
@@ -35,7 +39,9 @@ export class CartService {
               umkmProduct: {
                 include: {
                   images: true,
-                  umkm: { select: { id: true, businessName: true, status: true } },
+                  umkm: {
+                    select: { id: true, businessName: true, status: true },
+                  },
                 },
               },
             },
@@ -64,7 +70,9 @@ export class CartService {
                 umkmProduct: {
                   include: {
                     images: true,
-                    umkm: { select: { id: true, businessName: true, status: true } },
+                    umkm: {
+                      select: { id: true, businessName: true, status: true },
+                    },
                   },
                 },
               },
@@ -91,7 +99,9 @@ export class CartService {
               umkmProduct: {
                 include: {
                   images: true,
-                  umkm: { select: { id: true, businessName: true, status: true } },
+                  umkm: {
+                    select: { id: true, businessName: true, status: true },
+                  },
                 },
               },
             },
@@ -119,7 +129,9 @@ export class CartService {
     const { productId, umkmProductId, quantity } = dto;
 
     if (!productId && !umkmProductId) {
-      throw new BadRequestException('Either productId or umkmProductId must be provided');
+      throw new BadRequestException(
+        'Either productId or umkmProductId must be provided',
+      );
     }
 
     const cart = await this.getOrCreateCart(userId);
@@ -132,23 +144,25 @@ export class CartService {
         throw new NotFoundException('Product not found or inactive');
       }
       if (product.stock < quantity) {
-        throw new BadRequestException(`Insufficient stock. Available: ${product.stock}`);
+        throw new BadRequestException(
+          `Insufficient stock. Available: ${product.stock}`,
+        );
       }
 
       // Check if item already exists in cart
-      const existing = await this.prisma.cartItem.findUnique({
-        where: {
-          cartId_productId: {
-            cartId: cart.id,
-            productId,
-          },
-        },
+      // `findFirst`, bukan `findUnique`: kunci uniknya kini memuat
+      // `variantId` yang boleh null, dan Prisma tidak menerima null pada
+      // input kunci majemuk. Barisnya tetap unik — indeksnya yang menjaga.
+      const existing = await this.prisma.cartItem.findFirst({
+        where: { cartId: cart.id, productId, variantId: null },
       });
 
       if (existing) {
         const newQty = existing.quantity + quantity;
         if (product.stock < newQty) {
-          throw new BadRequestException(`Insufficient stock. Total requested: ${newQty}, Available: ${product.stock}`);
+          throw new BadRequestException(
+            `Insufficient stock. Total requested: ${newQty}, Available: ${product.stock}`,
+          );
         }
         await this.prisma.cartItem.update({
           where: { id: existing.id },
@@ -171,7 +185,9 @@ export class CartService {
         throw new NotFoundException('UMKM Product not found or inactive');
       }
       if (umkmProduct.stock < quantity) {
-        throw new BadRequestException(`Insufficient stock. Available: ${umkmProduct.stock}`);
+        throw new BadRequestException(
+          `Insufficient stock. Available: ${umkmProduct.stock}`,
+        );
       }
 
       const existing = await this.prisma.cartItem.findUnique({
@@ -186,7 +202,9 @@ export class CartService {
       if (existing) {
         const newQty = existing.quantity + quantity;
         if (umkmProduct.stock < newQty) {
-          throw new BadRequestException(`Insufficient stock. Total requested: ${newQty}, Available: ${umkmProduct.stock}`);
+          throw new BadRequestException(
+            `Insufficient stock. Total requested: ${newQty}, Available: ${umkmProduct.stock}`,
+          );
         }
         await this.prisma.cartItem.update({
           where: { id: existing.id },
@@ -212,7 +230,9 @@ export class CartService {
     const { productId, umkmProductId, quantity } = dto;
 
     if (!productId && !umkmProductId) {
-      throw new BadRequestException('Either productId or umkmProductId must be provided');
+      throw new BadRequestException(
+        'Either productId or umkmProductId must be provided',
+      );
     }
 
     const cart = await this.getOrCreateCart(userId);
@@ -225,16 +245,16 @@ export class CartService {
         throw new NotFoundException('Product not found or inactive');
       }
       if (product.stock < quantity) {
-        throw new BadRequestException(`Insufficient stock. Available: ${product.stock}`);
+        throw new BadRequestException(
+          `Insufficient stock. Available: ${product.stock}`,
+        );
       }
 
-      const existing = await this.prisma.cartItem.findUnique({
-        where: {
-          cartId_productId: {
-            cartId: cart.id,
-            productId,
-          },
-        },
+      // `findFirst`, bukan `findUnique`: kunci uniknya kini memuat
+      // `variantId` yang boleh null, dan Prisma tidak menerima null pada
+      // input kunci majemuk. Barisnya tetap unik — indeksnya yang menjaga.
+      const existing = await this.prisma.cartItem.findFirst({
+        where: { cartId: cart.id, productId, variantId: null },
       });
 
       if (!existing) {
@@ -253,7 +273,9 @@ export class CartService {
         throw new NotFoundException('UMKM Product not found or inactive');
       }
       if (umkmProduct.stock < quantity) {
-        throw new BadRequestException(`Insufficient stock. Available: ${umkmProduct.stock}`);
+        throw new BadRequestException(
+          `Insufficient stock. Available: ${umkmProduct.stock}`,
+        );
       }
 
       const existing = await this.prisma.cartItem.findUnique({
@@ -282,19 +304,19 @@ export class CartService {
 
   async removeItem(userId: string, productId?: string, umkmProductId?: string) {
     if (!productId && !umkmProductId) {
-      throw new BadRequestException('Either productId or umkmProductId must be provided');
+      throw new BadRequestException(
+        'Either productId or umkmProductId must be provided',
+      );
     }
 
     const cart = await this.getOrCreateCart(userId);
 
     if (productId) {
-      const existing = await this.prisma.cartItem.findUnique({
-        where: {
-          cartId_productId: {
-            cartId: cart.id,
-            productId,
-          },
-        },
+      // `findFirst`, bukan `findUnique`: kunci uniknya kini memuat
+      // `variantId` yang boleh null, dan Prisma tidak menerima null pada
+      // input kunci majemuk. Barisnya tetap unik — indeksnya yang menjaga.
+      const existing = await this.prisma.cartItem.findFirst({
+        where: { cartId: cart.id, productId, variantId: null },
       });
 
       if (existing) {

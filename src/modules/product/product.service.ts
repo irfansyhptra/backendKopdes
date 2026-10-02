@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
+import { OrderStatus, ProductUnit } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { CacheService } from '../../cache/cache.service';
 import { StorageService } from '../../storage/storage.service';
@@ -167,6 +168,31 @@ export class ProductService {
         images: {
           orderBy: { isPrimary: 'desc' },
         },
+        // Hanya varian aktif: yang dinonaktifkan pengurus tidak boleh bisa
+        // dipesan, dan menampilkannya lalu menolaknya di checkout lebih
+        // membingungkan daripada tidak menampilkannya sama sekali.
+        variants: {
+          where: { isActive: true },
+          orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+        },
+        // Toko penjualnya ikut, supaya halaman detail tidak perlu satu
+        // permintaan lagi hanya untuk menuliskan nama tokonya.
+        kopdes: {
+          select: {
+            id: true,
+            name: true,
+            logoUrl: true,
+            imageUrl: true,
+            village: true,
+            district: true,
+            // Koordinatnya ikut supaya klien bisa menghitung jaraknya sendiri
+            // dari posisi pengguna; endpoint detail tidak tahu di mana
+            // pembacanya berada.
+            latitude: true,
+            longitude: true,
+            _count: { select: { products: { where: { isActive: true } } } },
+          },
+        },
       },
     });
 
@@ -174,9 +200,44 @@ export class ProductService {
       throw new NotFoundException(`Product with ID ${id} not found`);
     }
 
+    const [rating, sold] = await Promise.all([
+      this.prisma.review.aggregate({
+        where: { productId: id },
+        _avg: { rating: true },
+        _count: { rating: true },
+      }),
+      // Terjual = jumlah unit pada pesanan yang benar-benar sampai. Pesanan
+      // yang masih berjalan atau batal bukan penjualan, dan menghitungnya
+      // membuat angka ini naik lalu turun lagi.
+      this.prisma.orderItem.aggregate({
+        where: {
+          productId: id,
+          order: {
+            status: { in: [OrderStatus.DELIVERED, OrderStatus.COMPLETED] },
+          },
+        },
+        _sum: { quantity: true },
+      }),
+    ]);
+
     const mappedProduct = {
       ...product,
       price: Number(product.price),
+      // Decimal diserialisasi sebagai string kalau dibiarkan; klien
+      // membacanya sebagai angka.
+      discountPrice:
+        product.discountPrice === null ? null : Number(product.discountPrice),
+      soldCount: sold._sum.quantity ?? 0,
+      // Harga varian ikut dinormalkan; Decimal diserialisasi sebagai string
+      // kalau dibiarkan, dan klien membacanya sebagai angka.
+      variants: product.variants.map((v) => ({
+        ...v,
+        price: v.price === null ? null : Number(v.price),
+      })),
+      rating: {
+        average: rating._count.rating > 0 ? rating._avg.rating : null,
+        count: rating._count.rating,
+      },
     };
 
     // Cache the detail for 30 minutes (1800 seconds)
@@ -259,7 +320,7 @@ export class ProductService {
         discountPrice: dto.discountPrice ?? null,
         stock: dto.stock,
         minStock: dto.minStock ?? 5,
-        unit: dto.unit?.trim() || 'pcs',
+        unit: dto.unit ?? ProductUnit.PCS,
         sku: dto.sku?.trim() || null,
         categoryId: dto.categoryId,
         // Barang selalu lahir di Kopdes pembuatnya. Tanpa ini produk pegawai
@@ -373,7 +434,7 @@ export class ProductService {
         discountPrice: dto.discountPrice,
         stock: dto.stock,
         minStock: dto.minStock,
-        unit: dto.unit?.trim() || undefined,
+        unit: dto.unit,
         sku: dto.sku?.trim() || undefined,
         categoryId: dto.categoryId,
         isPreOrderAllowed: dto.isPreOrderAllowed,

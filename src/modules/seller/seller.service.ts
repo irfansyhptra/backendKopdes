@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { CacheService } from '../../cache/cache.service';
 import { StorageService } from '../../storage/storage.service';
@@ -51,7 +55,9 @@ export class SellerService {
     const productsSoldResult = await this.prisma.orderItem.aggregate({
       where: {
         umkmProduct: { umkmId: umkm.id },
-        order: { status: { in: [OrderStatus.DELIVERED, OrderStatus.COMPLETED] } },
+        order: {
+          status: { in: [OrderStatus.DELIVERED, OrderStatus.COMPLETED] },
+        },
       },
       _sum: { quantity: true },
     });
@@ -65,7 +71,13 @@ export class SellerService {
       where: {
         umkmProduct: { umkmId: umkm.id },
         order: {
-          status: { in: [OrderStatus.PAID, OrderStatus.DELIVERED, OrderStatus.COMPLETED] },
+          status: {
+            in: [
+              OrderStatus.PAID,
+              OrderStatus.DELIVERED,
+              OrderStatus.COMPLETED,
+            ],
+          },
           createdAt: { gte: startOfToday },
         },
       },
@@ -84,7 +96,13 @@ export class SellerService {
       where: {
         umkmProduct: { umkmId: umkm.id },
         order: {
-          status: { in: [OrderStatus.PAID, OrderStatus.DELIVERED, OrderStatus.COMPLETED] },
+          status: {
+            in: [
+              OrderStatus.PAID,
+              OrderStatus.DELIVERED,
+              OrderStatus.COMPLETED,
+            ],
+          },
           createdAt: { gte: startOfMonth },
         },
       },
@@ -100,7 +118,9 @@ export class SellerService {
       where: { umkmProduct: { umkmId: umkm.id } },
       _avg: { rating: true },
     });
-    const storeRating = ratingResult._avg.rating ? Number(ratingResult._avg.rating.toFixed(1)) : 0.0;
+    const storeRating = ratingResult._avg.rating
+      ? Number(ratingResult._avg.rating.toFixed(1))
+      : 0.0;
 
     // 6. Low stock products (stock <= 5)
     const lowStockCount = await this.prisma.uMKMProduct.count({
@@ -125,7 +145,12 @@ export class SellerService {
     const [recentOrderItems, recentReviews] = await Promise.all([
       this.prisma.orderItem.findMany({
         where: { umkmProduct: { umkmId: umkm.id } },
-        include: { order: { select: { customer: { select: { name: true } }, createdAt: true } }, umkmProduct: true },
+        include: {
+          order: {
+            select: { customer: { select: { name: true } }, createdAt: true },
+          },
+          umkmProduct: true,
+        },
         orderBy: { createdAt: 'desc' },
         take: 5,
       }),
@@ -219,7 +244,15 @@ export class SellerService {
   }
 
   // Product List (with caching)
-  async getProducts(userId: string, query: { search?: string; categoryId?: string; page?: number; limit?: number }) {
+  async getProducts(
+    userId: string,
+    query: {
+      search?: string;
+      categoryId?: string;
+      page?: number;
+      limit?: number;
+    },
+  ) {
     const umkm = await this.getUmkmByUserId(userId);
     const { search, categoryId, page = 1, limit = 10 } = query;
     const skip = (page - 1) * limit;
@@ -262,10 +295,16 @@ export class SellerService {
 
     const mappedProducts = products.map((p) => {
       // Calculate rating & sales count
-      const avgRating = p.reviews.length > 0
-        ? Number((p.reviews.reduce((sum, r) => sum + r.rating, 0) / p.reviews.length).toFixed(1))
-        : 0.0;
-      
+      const avgRating =
+        p.reviews.length > 0
+          ? Number(
+              (
+                p.reviews.reduce((sum, r) => sum + r.rating, 0) /
+                p.reviews.length
+              ).toFixed(1),
+            )
+          : 0.0;
+
       return {
         ...p,
         price: Number(p.price),
@@ -289,7 +328,11 @@ export class SellerService {
   }
 
   // Create Product
-  async createProduct(userId: string, dto: CreateSellerProductDto, files?: any[]) {
+  async createProduct(
+    userId: string,
+    dto: CreateSellerProductDto,
+    files?: any[],
+  ) {
     const umkm = await this.getUmkmByUserId(userId);
 
     // Verify category
@@ -297,7 +340,9 @@ export class SellerService {
       where: { id: dto.categoryId },
     });
     if (!category) {
-      throw new BadRequestException(`Category with ID ${dto.categoryId} not found`);
+      throw new BadRequestException(
+        `Category with ID ${dto.categoryId} not found`,
+      );
     }
 
     // Create UMKMProduct
@@ -319,7 +364,10 @@ export class SellerService {
       const imagesData = [];
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        const objectKey = await this.storageService.uploadFile(file, 'products');
+        const objectKey = await this.storageService.uploadFile(
+          file,
+          'products',
+        );
         const url = await this.storageService.getPublicUrl(objectKey);
         imagesData.push({
           umkmProductId: product.id,
@@ -345,14 +393,21 @@ export class SellerService {
   }
 
   // Update Product
-  async updateProduct(userId: string, productId: string, dto: UpdateSellerProductDto, files?: any[]) {
+  async updateProduct(
+    userId: string,
+    productId: string,
+    dto: UpdateSellerProductDto,
+    files?: any[],
+  ) {
     const umkm = await this.getUmkmByUserId(userId);
 
     const product = await this.prisma.uMKMProduct.findFirst({
       where: { id: productId, umkmId: umkm.id },
     });
     if (!product) {
-      throw new NotFoundException(`Product with ID ${productId} not found under your store`);
+      throw new NotFoundException(
+        `Product with ID ${productId} not found under your store`,
+      );
     }
 
     // Check category if changing
@@ -361,7 +416,9 @@ export class SellerService {
         where: { id: dto.categoryId },
       });
       if (!category) {
-        throw new BadRequestException(`Category with ID ${dto.categoryId} not found`);
+        throw new BadRequestException(
+          `Category with ID ${dto.categoryId} not found`,
+        );
       }
     }
 
@@ -374,7 +431,10 @@ export class SellerService {
       const imagesData = [];
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        const objectKey = await this.storageService.uploadFile(file, 'products');
+        const objectKey = await this.storageService.uploadFile(
+          file,
+          'products',
+        );
         const url = await this.storageService.getPublicUrl(objectKey);
         imagesData.push({
           umkmProductId: productId,
@@ -420,7 +480,9 @@ export class SellerService {
       where: { id: productId, umkmId: umkm.id },
     });
     if (!product) {
-      throw new NotFoundException(`Product with ID ${productId} not found under your store`);
+      throw new NotFoundException(
+        `Product with ID ${productId} not found under your store`,
+      );
     }
 
     // Hard delete or deactivate
@@ -445,12 +507,19 @@ export class SellerService {
         },
       },
       include: {
-        customer: { select: { id: true, name: true, email: true, phone: true } },
+        customer: {
+          select: { id: true, name: true, email: true, phone: true },
+        },
         items: {
           where: { umkmProduct: { umkmId: umkm.id } },
           include: { umkmProduct: { include: { images: true } } },
         },
         deliveryAddress: true,
+        delivery: {
+          include: {
+            courier: { select: { id: true, name: true, phone: true } },
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -475,18 +544,24 @@ export class SellerService {
         items: { some: { umkmProduct: { umkmId: umkm.id } } },
       },
       include: {
-        customer: { select: { id: true, name: true, email: true, phone: true } },
+        customer: {
+          select: { id: true, name: true, email: true, phone: true },
+        },
         items: {
           where: { umkmProduct: { umkmId: umkm.id } },
           include: { umkmProduct: { include: { images: true } } },
         },
         deliveryAddress: true,
-        delivery: { include: { courier: { select: { name: true, phone: true } } } },
+        delivery: {
+          include: { courier: { select: { name: true, phone: true } } },
+        },
       },
     });
 
     if (!order) {
-      throw new NotFoundException(`Order with ID ${orderId} not found or doesn't belong to your products`);
+      throw new NotFoundException(
+        `Order with ID ${orderId} not found or doesn't belong to your products`,
+      );
     }
 
     return {
@@ -500,7 +575,11 @@ export class SellerService {
   }
 
   // Update order status (for workflow integration)
-  async updateOrderStatus(userId: string, orderId: string, status: OrderStatus) {
+  async updateOrderStatus(
+    userId: string,
+    orderId: string,
+    status: OrderStatus,
+  ) {
     const umkm = await this.getUmkmByUserId(userId);
 
     const order = await this.prisma.order.findFirst({
@@ -511,7 +590,9 @@ export class SellerService {
     });
 
     if (!order) {
-      throw new NotFoundException(`Order with ID ${orderId} not found or doesn't belong to your store`);
+      throw new NotFoundException(
+        `Order with ID ${orderId} not found or doesn't belong to your store`,
+      );
     }
 
     // Update order status in DB
@@ -549,14 +630,23 @@ export class SellerService {
         where: {
           umkmProduct: { umkmId: umkm.id },
           order: {
-            status: { in: [OrderStatus.PAID, OrderStatus.DELIVERED, OrderStatus.COMPLETED] },
+            status: {
+              in: [
+                OrderStatus.PAID,
+                OrderStatus.DELIVERED,
+                OrderStatus.COMPLETED,
+              ],
+            },
             createdAt: { gte: date, lt: nextDay },
           },
         },
         select: { quantity: true, price: true },
       });
 
-      const totalRevenue = items.reduce((sum, item) => sum + item.quantity * Number(item.price), 0);
+      const totalRevenue = items.reduce(
+        (sum, item) => sum + item.quantity * Number(item.price),
+        0,
+      );
       const totalUnits = items.reduce((sum, item) => sum + item.quantity, 0);
 
       // format day name (e.g. Sen, Sel, Rab, Kam, Jum, Sab, Min)

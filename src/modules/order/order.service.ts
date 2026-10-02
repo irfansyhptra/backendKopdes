@@ -10,6 +10,7 @@ import { AddressService } from '../address/address.service';
 import { CheckoutDto } from './dto/checkout.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import {
+  FulfillmentMethod,
   OrderStatus,
   PaymentMethod,
   PaymentStatus,
@@ -105,6 +106,8 @@ export class OrderService {
     if (checkoutItems.length === 0) {
       throw new BadRequestException('Tidak ada produk keranjang yang dipilih');
     }
+
+    const fulfillment = this.resolveFulfillment(dto);
 
     // Alamat utama profil, alamat tersimpan pilihan pemesan, atau alamat baru
     // yang diketik saat checkout — semuanya diputuskan di satu tempat.
@@ -235,6 +238,7 @@ export class OrderService {
           status: 'PENDING',
           paymentMethod: dto.paymentMethod,
           paymentStatus: 'PENDING',
+          fulfillment: fulfillment,
           deliveryAddressId: address.id,
           items: {
             create: orderItemsData,
@@ -316,10 +320,40 @@ export class OrderService {
     return order;
   }
 
+  /**
+   * Gabungan cara bayar dan cara terima yang boleh dipesan.
+   *
+   * Tiga pilihan yang ditawarkan aplikasi: bayar di muka + ambil sendiri,
+   * COD + diantar, dan bayar di muka + diantar. COD + ambil sendiri ditolak —
+   * membayar di tempat saat mengambil sendiri sama saja dengan transaksi
+   * kasir, yang punya alurnya sendiri dan tidak lewat pesanan.
+   *
+   * Basis data menjaga aturan yang sama lewat CHECK constraint; yang di sini
+   * supaya penolakannya berupa pesan yang bisa dibaca, bukan galat SQL.
+   */
+  private resolveFulfillment(dto: {
+    paymentMethod: PaymentMethod;
+    fulfillment?: FulfillmentMethod;
+  }): FulfillmentMethod {
+    const fulfillment = dto.fulfillment ?? FulfillmentMethod.DELIVERY;
+    if (
+      dto.paymentMethod === PaymentMethod.COD &&
+      fulfillment === FulfillmentMethod.PICKUP
+    ) {
+      throw new BadRequestException(
+        'Bayar di tempat hanya berlaku untuk pesanan yang diantar kurir. ' +
+          'Untuk ambil sendiri, selesaikan pembayarannya lebih dulu.',
+      );
+    }
+    return fulfillment;
+  }
+
   async createDirectOrder(userId: string, dto: CreateOrderDto) {
     if (dto.items.length === 0) {
       throw new BadRequestException('Order items list is empty');
     }
+
+    const fulfillment = this.resolveFulfillment(dto);
 
     // Alamat utama profil, alamat tersimpan pilihan pemesan, atau alamat baru
     // yang diketik saat checkout — semuanya diputuskan di satu tempat.
@@ -440,6 +474,7 @@ export class OrderService {
           status: 'PENDING',
           paymentMethod: dto.paymentMethod,
           paymentStatus: 'PENDING',
+          fulfillment: fulfillment,
           deliveryAddressId: address.id,
           items: {
             create: orderItemsData,
