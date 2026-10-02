@@ -5,6 +5,8 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import { Role } from '@prisma/client';
+import { ChatChannel } from './dto/chat.dto';
 
 const userSelect = { id: true, name: true, role: true, email: true };
 
@@ -17,6 +19,20 @@ export class ChatService {
     return a < b ? [a, b] : [b, a];
   }
 
+  private channelForRoles(first: Role, second: Role): ChatChannel {
+    const roles = new Set<Role>([first, second]);
+    const sellerRoles = [Role.UMKM, Role.ADMIN_KOPDES, Role.PEGAWAI_KOPDES];
+    const hasSeller = sellerRoles.some((role) => roles.has(role));
+
+    if (roles.has(Role.CUSTOMER) && hasSeller) {
+      return ChatChannel.MARKETPLACE;
+    }
+    if (roles.has(Role.COURIER) && hasSeller) {
+      return ChatChannel.DELIVERY;
+    }
+    return ChatChannel.GENERAL;
+  }
+
   private shape(conv: any, meId: string) {
     const other = conv.user1Id === meId ? conv.user2 : conv.user1;
     return {
@@ -25,15 +41,35 @@ export class ChatService {
       otherUser: other,
       lastMessage: conv.messages?.[0] ?? null,
       unreadCount: conv._count?.messages ?? 0,
+      channel: this.channelForRoles(conv.user1.role, conv.user2.role),
     };
   }
 
-  async getOrCreate(meId: string, recipientId: string) {
+  async getOrCreate(
+    meId: string,
+    recipientId: string,
+    requestedChannel?: ChatChannel,
+  ) {
     if (meId === recipientId) {
-      throw new BadRequestException('Tidak bisa memulai percakapan dengan diri sendiri');
+      throw new BadRequestException(
+        'Tidak bisa memulai percakapan dengan diri sendiri',
+      );
     }
-    const recipient = await this.prisma.user.findUnique({ where: { id: recipientId } });
+    const [me, recipient] = await Promise.all([
+      this.prisma.user.findUnique({ where: { id: meId } }),
+      this.prisma.user.findUnique({ where: { id: recipientId } }),
+    ]);
+    if (!me) throw new NotFoundException('Pengguna tidak ditemukan');
     if (!recipient) throw new NotFoundException('Penerima tidak ditemukan');
+
+    const actualChannel = this.channelForRoles(me.role, recipient.role);
+    if (requestedChannel && requestedChannel !== actualChannel) {
+      throw new ForbiddenException(
+        requestedChannel === ChatChannel.DELIVERY
+          ? 'Chat kurir hanya untuk penjual dan kurir'
+          : 'Chat penjualan hanya untuk pembeli dan penjual',
+      );
+    }
 
     const [user1Id, user2Id] = this.orderPair(meId, recipientId);
 
@@ -47,7 +83,7 @@ export class ChatService {
     return this.shape({ ...conv, messages: [], _count: { messages: 0 } }, meId);
   }
 
-  async listConversations(meId: string) {
+  async listConversations(meId: string, channel?: ChatChannel) {
     const convs = await this.prisma.conversation.findMany({
       where: { OR: [{ user1Id: meId }, { user2Id: meId }] },
       orderBy: { lastMessageAt: 'desc' },
@@ -63,7 +99,89 @@ export class ChatService {
       },
     });
 
-    return convs.map((c) => this.shape(c, meId));
+    const shaped = convs.map((c) => this.shape(c, meId));
+    return channel
+      ? shaped.filter((conversation) => conversation.channel === channel)
+      : shaped;
+  }
+
+  /// Pembeli memulai chat dari halaman produk Kopdes. Produk menentukan
+  /// Kopdes, lalu admin aktif pada Kopdes tersebut menjadi penerima.
+  async startWithProductSeller(meId: string, productId: string) {
+    const me = await this.prisma.user.findUnique({ where: { id: meId } });
+    if (!me || me.role !== Role.CUSTOMER) {
+      throw new ForbiddenException('Chat produk hanya dapat dimulai pembeli');
+    }
+
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+      select: { kopdesId: true },
+    });
+    if (!product) throw new NotFoundException('Produk tidak ditemukan');
+    if (!product.kopdesId) {
+      throw new BadRequestException('Produk belum terhubung dengan Kopdes');
+    }
+
+    const seller = await this.prisma.user.findFirst({
+      where: {
+        kopdesId: product.kopdesId,
+        role: { in: [Role.ADMIN_KOPDES, Role.PEGAWAI_KOPDES] },
+      },
+      orderBy: [{ role: 'asc' }, { createdAt: 'asc' }],
+    });
+    if (!seller) {
+      throw new NotFoundException('Penjual produk belum dapat dihubungi');
+    }
+    return this.getOrCreate(meId, seller.id, ChatChannel.MARKETPLACE);
+  }
+
+  /// Produk UMKM memiliki pemilik tunggal, jadi penerimanya dapat diambil
+  /// langsung dari relasi UMKM -> User.
+  async startWithUmkmProductSeller(meId: string, productId: string) {
+    const me = await this.prisma.user.findUnique({ where: { id: meId } });
+    if (!me || me.role !== Role.CUSTOMER) {
+      throw new ForbiddenException('Chat produk hanya dapat dimulai pembeli');
+    }
+
+    const product = await this.prisma.uMKMProduct.findUnique({
+      where: { id: productId },
+      select: { umkm: { select: { userId: true } } },
+    });
+    if (!product) throw new NotFoundException('Produk UMKM tidak ditemukan');
+    return this.getOrCreate(meId, product.umkm.userId, ChatChannel.MARKETPLACE);
+  }
+
+  /// Penjual UMKM memulai chat dari pesanan yang memang berisi produknya.
+  /// Target hanya boleh pembeli pesanan atau kurir yang sudah ditugaskan.
+  async startFromSellerOrder(
+    meId: string,
+    orderId: string,
+    target: 'customer' | 'courier',
+  ) {
+    const umkm = await this.prisma.uMKM.findUnique({ where: { userId: meId } });
+    if (!umkm) {
+      throw new ForbiddenException('Pesanan ini bukan milik toko Anda');
+    }
+
+    const order = await this.prisma.order.findFirst({
+      where: {
+        id: orderId,
+        items: { some: { umkmProduct: { umkmId: umkm.id } } },
+      },
+      include: { delivery: { select: { courierId: true } } },
+    });
+    if (!order) {
+      throw new ForbiddenException('Pesanan ini bukan milik toko Anda');
+    }
+
+    if (target === 'customer') {
+      return this.getOrCreate(meId, order.customerId, ChatChannel.MARKETPLACE);
+    }
+    const courierId = order.delivery?.courierId;
+    if (!courierId) {
+      throw new BadRequestException('Kurir belum ditugaskan pada pesanan');
+    }
+    return this.getOrCreate(meId, courierId, ChatChannel.DELIVERY);
   }
 
   private async assertParticipant(meId: string, conversationId: string) {
