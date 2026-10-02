@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
-import { MembershipStatus, Prisma } from '@prisma/client';
+import { MembershipStatus, Prisma, Role } from '@prisma/client';
 
 import { PrismaService } from '../../database/prisma.service';
 import {
@@ -141,6 +141,9 @@ export class KoperasiService {
     const { page = 1, limit = 10, search } = query;
     const where = {
       isActive: true,
+      ...(query.withProductsOnly
+        ? { products: { some: { isActive: true } } }
+        : {}),
       ...(search
         ? {
             OR: [
@@ -151,25 +154,84 @@ export class KoperasiService {
         : {}),
     };
 
-    const [rows, total] = await Promise.all([
-      this.prisma.koperasi.findMany({
-        where,
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: { name: 'asc' },
-        select: CARD_SELECT,
-      }),
-      this.prisma.koperasi.count({ where }),
-    ]);
+    const origin =
+      query.latitude !== undefined && query.longitude !== undefined
+        ? { latitude: query.latitude, longitude: query.longitude }
+        : null;
 
+    /**
+     * Tanpa koordinat: urut nama, dipotong di basis data seperti biasa.
+     *
+     * Dengan koordinat: seluruh baris diambil dulu, karena jaraknya baru bisa
+     * dihitung setelah barisnya ada — memotong di basis data lebih dulu
+     * berarti mengurutkan halaman pertama menurut nama, lalu menyusunnya
+     * ulang menurut jarak, dan Kopdes terdekat yang kebetulan berhuruf Z
+     * tidak akan pernah muncul.
+     */
+    if (origin === null) {
+      const [rows, total] = await Promise.all([
+        this.prisma.koperasi.findMany({
+          where,
+          skip: (page - 1) * limit,
+          take: limit,
+          orderBy: { name: 'asc' },
+          select: CARD_SELECT,
+        }),
+        this.prisma.koperasi.count({ where }),
+      ]);
+
+      return this.paginate(await this.decorate(rows), total, page, limit);
+    }
+
+    if (!isValidCoordinate(origin)) {
+      throw new BadRequestException('Koordinat tidak valid.');
+    }
+
+    const all = await this.prisma.koperasi.findMany({
+      where,
+      select: CARD_SELECT,
+    });
+
+    // Radius tak terhingga: ini daftar lengkap yang diurutkan, bukan
+    // pencarian dalam jangkauan. Yang jauh tetap tampil, di urutan bawah.
+    const withDistance = sortByDistance(all, origin, Number.POSITIVE_INFINITY);
+
+    /**
+     * Kopdes tanpa koordinat ditaruh di belakang, bukan dibuang.
+     *
+     * `sortByDistance` memang membuangnya — benar untuk `nearby`, yang
+     * menjawab "apa yang ada dalam radius". Di sini salah: akibatnya satu
+     * Kopdes hilang dari daftar begitu izin lokasi diberikan, dan muncul lagi
+     * begitu ditolak.
+     */
+    const placed = new Set(withDistance.map((k) => k.id));
+    const unlocated = all.filter((k) => !placed.has(k.id));
+    const ranked = [...withDistance, ...unlocated];
+    const start = (page - 1) * limit;
+
+    return this.paginate(
+      await this.decorate(ranked.slice(start, start + limit)),
+      ranked.length,
+      page,
+      limit,
+    );
+  }
+
+  /// Melengkapi baris mentah dengan status buka dan ratingnya.
+  private async decorate<T extends { id: string; operatingHours: unknown }>(
+    rows: T[],
+  ) {
     const ratings = await this.ratingsFor(rows.map((k) => k.id));
+    return rows.map((k) => ({
+      ...k,
+      isOpen: isOpenNow(k.operatingHours as never),
+      rating: ratings.get(k.id) ?? EMPTY_RATING,
+    }));
+  }
 
+  private paginate<T>(items: T[], total: number, page: number, limit: number) {
     return {
-      koperasi: rows.map((k) => ({
-        ...k,
-        isOpen: isOpenNow(k.operatingHours),
-        rating: ratings.get(k.id) ?? EMPTY_RATING,
-      })),
+      koperasi: items,
       total,
       page,
       limit,
@@ -204,8 +266,25 @@ export class KoperasiService {
       _count: { rating: true },
     });
 
+    /**
+     * Pengurus yang bisa dihubungi warga — tujuan tombol "Chat Toko".
+     *
+     * Koperasi tidak menyimpan kolom pemilik; yang ada adalah staf dengan
+     * `kopdesId` yang sama. Diambil yang tertua supaya tujuannya stabil:
+     * kalau berpindah-pindah tiap permintaan, percakapan yang sama bisa
+     * terbuka sebagai utas baru dengan orang lain.
+     */
+    const admin = await this.prisma.user.findFirst({
+      where: { kopdesId: id, role: Role.ADMIN_KOPDES },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
+
     return {
       ...koperasi,
+      // Null bila koperasinya belum punya pengurus — tombol chat di klien
+      // memang tidak digambar tanpa lawan bicara.
+      adminUserId: admin?.id ?? null,
       isOpen: isOpenNow(koperasi.operatingHours),
       productCount: koperasi._count.products,
       umkmCount: koperasi._count.umkms,

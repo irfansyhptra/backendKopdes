@@ -1,5 +1,15 @@
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsEnum,
+  IsInt,
+  IsLatitude,
+  IsLongitude,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
 import { UMKMCategory } from '@prisma/client';
 
 /**
@@ -22,6 +32,24 @@ export class MitraListQueryDto {
   @IsString()
   @IsOptional()
   search?: string;
+
+  /// Koordinat pembaca. Opsional dan TIDAK menyaring — hanya mengurutkan.
+  /// `nearby` yang menyaring dalam radius; yang ini daftar lengkap.
+  @Type(() => Number)
+  @IsLatitude()
+  @IsOptional()
+  latitude?: number;
+
+  @Type(() => Number)
+  @IsLongitude()
+  @IsOptional()
+  longitude?: number;
+
+  /// Hanya mitra yang benar-benar punya barang untuk dijual.
+  @Type(() => Boolean)
+  @IsBoolean()
+  @IsOptional()
+  withProductsOnly?: boolean;
 
   @Type(() => Number)
   @IsInt()

@@ -127,6 +127,9 @@ export class MitraService {
       status: UMKMStatus.ACTIVE,
       ...(query.kopdesId ? { kopdesId: query.kopdesId } : {}),
       ...(query.category ? { category: query.category } : {}),
+      ...(query.withProductsOnly
+        ? { products: { some: { isActive: true } } }
+        : {}),
       ...(query.search
         ? {
             businessName: {
@@ -137,26 +140,78 @@ export class MitraService {
         : {}),
     };
 
-    const [rows, total] = await Promise.all([
-      this.prisma.uMKM.findMany({
-        where,
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: { businessName: 'asc' },
-        select: { ...CARD_SELECT, _count: { select: { products: true } } },
-      }),
-      this.prisma.uMKM.count({ where }),
-    ]);
+    const select = {
+      ...CARD_SELECT,
+      _count: { select: { products: true } },
+    };
 
+    const origin =
+      query.latitude !== undefined && query.longitude !== undefined
+        ? { latitude: query.latitude, longitude: query.longitude }
+        : null;
+
+    // Tanpa koordinat: urut nama, dipotong di basis data seperti biasa.
+    if (origin === null) {
+      const [rows, total] = await Promise.all([
+        this.prisma.uMKM.findMany({
+          where,
+          skip: (page - 1) * limit,
+          take: limit,
+          orderBy: { businessName: 'asc' },
+          select,
+        }),
+        this.prisma.uMKM.count({ where }),
+      ]);
+      return this.paginate(await this.decorate(rows), total, page, limit);
+    }
+
+    if (!isValidCoordinate(origin)) {
+      throw new BadRequestException('Koordinat tidak valid.');
+    }
+
+    /**
+     * Dengan koordinat: seluruh baris diambil dulu, karena jaraknya baru bisa
+     * dihitung setelah barisnya ada. Radiusnya tak terhingga — ini daftar
+     * lengkap yang diurutkan, bukan pencarian dalam jangkauan.
+     *
+     * Mitra tanpa koordinat ditaruh di belakang, bukan dibuang: membuangnya
+     * membuat satu toko lenyap begitu izin lokasi diberikan, lalu muncul lagi
+     * begitu ditolak.
+     */
+    const all = await this.prisma.uMKM.findMany({ where, select });
+    const withDistance = sortByDistance(all, origin, Number.POSITIVE_INFINITY);
+    const placed = new Set(withDistance.map((m) => m.id));
+    const ranked = [...withDistance, ...all.filter((m) => !placed.has(m.id))];
+    const start = (page - 1) * limit;
+
+    return this.paginate(
+      await this.decorate(ranked.slice(start, start + limit)),
+      ranked.length,
+      page,
+      limit,
+    );
+  }
+
+  /// Melengkapi baris mentah dengan status buka, jumlah produk, dan rating.
+  private async decorate<
+    T extends {
+      id: string;
+      operatingHours: unknown;
+      _count: { products: number };
+    },
+  >(rows: T[]) {
     const ratings = await this.ratingsFor(rows.map((m) => m.id));
+    return rows.map((m) => ({
+      ...m,
+      isOpen: isOpenNow(m.operatingHours as never),
+      productCount: m._count.products,
+      rating: ratings.get(m.id) ?? EMPTY_RATING,
+    }));
+  }
 
+  private paginate<T>(items: T[], total: number, page: number, limit: number) {
     return {
-      umkm: rows.map((m) => ({
-        ...m,
-        isOpen: isOpenNow(m.operatingHours),
-        productCount: m._count.products,
-        rating: ratings.get(m.id) ?? EMPTY_RATING,
-      })),
+      umkm: items,
       total,
       page,
       limit,
@@ -169,6 +224,10 @@ export class MitraService {
       where: { id, status: UMKMStatus.ACTIVE },
       select: {
         ...CARD_SELECT,
+        // Pemilik tokonya — tujuan tombol "Chat Toko" di aplikasi. Hanya id,
+        // bukan nama atau kontaknya: yang dibutuhkan klien cuma lawan bicara
+        // untuk membuka percakapan.
+        userId: true,
         kopdes: { select: { id: true, name: true, village: true } },
         _count: { select: { products: true } },
       },

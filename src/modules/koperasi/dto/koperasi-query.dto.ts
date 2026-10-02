@@ -1,7 +1,24 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsLatitude,
+  IsLongitude,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
 
-/// Daftar Kopdes tanpa konteks lokasi (mis. saat izin lokasi ditolak).
+/// Daftar Kopdes.
+///
+/// Koordinatnya opsional dan TIDAK menyaring: ia hanya mengurutkan. Endpoint
+/// `nearby` yang menyaring dalam radius; yang ini menampilkan seluruh Kopdes
+/// aktif, terdekat lebih dulu bila lokasinya diketahui.
+///
+/// Pemisahan ini yang dulu hilang: beranda memakai `nearby` dengan radius
+/// 10 km, sehingga desa yang lebih jauh — dan di banyak kabupaten itu berarti
+/// hampir semuanya — terbaca sebagai "tidak ada Kopdes".
 export class KoperasiQueryDto {
   @Type(() => Number)
   @IsInt()
@@ -19,4 +36,23 @@ export class KoperasiQueryDto {
   @IsString()
   @IsOptional()
   search?: string;
+
+  @Type(() => Number)
+  @IsLatitude()
+  @IsOptional()
+  latitude?: number;
+
+  @Type(() => Number)
+  @IsLongitude()
+  @IsOptional()
+  longitude?: number;
+
+  /// Hanya Kopdes yang benar-benar punya barang untuk dijual.
+  ///
+  /// Etalase kosong membuat orang mengira aplikasinya rusak; lebih baik
+  /// Kopdes itu belum muncul sampai barang pertamanya diunggah.
+  @Type(() => Boolean)
+  @IsBoolean()
+  @IsOptional()
+  withProductsOnly?: boolean;
 }
