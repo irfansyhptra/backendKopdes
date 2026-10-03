@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { Prisma, UMKMStatus } from '@prisma/client';
+import { OrderStatus, Prisma, UMKMStatus } from '@prisma/client';
 
 import {
   haversineMeters,
@@ -151,16 +151,25 @@ export class MarketplaceService {
 
     // Rating diambil dalam dua query groupBy untuk seluruh hasil, bukan satu
     // query per kartu.
-    const [koperasiRatings, umkmRatings] = await Promise.all([
-      this.ratings(
-        'productId',
-        koperasiRows.map((r) => r.id),
-      ),
-      this.ratings(
-        'umkmProductId',
-        umkmRows.map((r) => r.id),
-      ),
-    ]);
+    const [koperasiRatings, umkmRatings, koperasiSold, umkmSold] =
+      await Promise.all([
+        this.ratings(
+          'productId',
+          koperasiRows.map((r) => r.id),
+        ),
+        this.ratings(
+          'umkmProductId',
+          umkmRows.map((r) => r.id),
+        ),
+        this.soldCounts(
+          'productId',
+          koperasiRows.map((r) => r.id),
+        ),
+        this.soldCounts(
+          'umkmProductId',
+          umkmRows.map((r) => r.id),
+        ),
+      ]);
 
     let merged: MergedProduct[] = [
       ...koperasiRows.map((p) => ({
@@ -179,6 +188,7 @@ export class MarketplaceService {
         latitude: p.kopdes?.latitude ?? null,
         longitude: p.kopdes?.longitude ?? null,
         rating: koperasiRatings.get(p.id) ?? EMPTY_RATING,
+        soldCount: koperasiSold.get(p.id) ?? 0,
       })),
       ...umkmRows.map((p) => ({
         id: p.id,
@@ -196,6 +206,7 @@ export class MarketplaceService {
         latitude: p.umkm?.latitude ?? null,
         longitude: p.umkm?.longitude ?? null,
         rating: umkmRatings.get(p.id) ?? EMPTY_RATING,
+        soldCount: umkmSold.get(p.id) ?? 0,
       })),
     ];
 
@@ -326,6 +337,41 @@ export class MarketplaceService {
           return b.createdAt.getTime() - a.createdAt.getTime();
       }
     };
+  }
+
+  /**
+   * Jumlah terjual per produk, satu groupBy untuk seluruh halaman.
+   *
+   * Pola yang sama dengan [ratings]: satu query untuk semua kartu, bukan
+   * satu query per kartu — kalau tidak, daftar 20 produk menjadi 20
+   * perjalanan ke basis data.
+   *
+   * Hanya pesanan yang benar-benar sampai yang dihitung. Pesanan yang masih
+   * menunggu bayar atau dibatalkan bukan barang yang terjual, dan
+   * memasukkannya membuat angka di kartu naik lalu turun lagi.
+   */
+  private async soldCounts(
+    key: 'productId' | 'umkmProductId',
+    ids: string[],
+  ) {
+    if (ids.length === 0) return new Map<string, number>();
+
+    const groups = await this.prisma.orderItem.groupBy({
+      by: [key],
+      where: {
+        [key]: { in: ids },
+        order: {
+          status: { in: [OrderStatus.DELIVERED, OrderStatus.COMPLETED] },
+        },
+      },
+      _sum: { quantity: true },
+    });
+
+    return new Map(
+      groups
+        .filter((g) => g[key] !== null)
+        .map((g) => [g[key] as string, g._sum.quantity ?? 0]),
+    );
   }
 
   private async ratings(key: 'productId' | 'umkmProductId', ids: string[]) {
