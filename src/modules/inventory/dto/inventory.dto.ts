@@ -1,9 +1,11 @@
 import {
   IsEnum,
+  IsISO8601,
   IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
+  MaxLength,
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -65,4 +67,37 @@ export class StockOpnameDto extends ProductRefDto {
   @IsString()
   @IsOptional()
   reason?: string;
+}
+
+/**
+ * Satu pergerakan stok dari kasir POS.
+ *
+ * Bedanya dengan [AdjustStockDto] cuma satu: `externalRef` wajib. Kasir
+ * berjalan di jaringan desa yang putus-nyambung dan akan mengirim ulang
+ * permintaan yang jawabannya tidak sampai; nomor struk membuat kiriman kedua
+ * dikenali sebagai permintaan yang sama, bukan penjualan kedua.
+ */
+export class PosMovementDto extends AdjustStockDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  externalRef!: string;
+}
+
+/// Pemantauan stok: ambil yang terjadi setelah penanda waktu terakhir.
+export class LiveFeedQueryDto {
+  /// Penanda dari respons sebelumnya. Kosong = ambil yang terbaru.
+  ///
+  /// Nilainya `serverTime` milik server, bukan jam perangkat: kasir dan
+  /// ponsel pemilik toko tidak pernah benar-benar sinkron, dan selisih
+  /// beberapa detik saja sudah cukup untuk melewatkan atau mengulang baris.
+  @IsISO8601()
+  @IsOptional()
+  since?: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  limit?: number;
 }

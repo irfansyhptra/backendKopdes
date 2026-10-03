@@ -879,11 +879,23 @@ model InventoryTransaction {
   // Siapa yang mencatat. Null untuk pergerakan otomatis dari checkout.
   userId        String?
   user          User?                    @relation(fields: [userId], references: [id])
+
+  /// Nomor struk dari sistem luar, mis. kasir POS. Null untuk pergerakan
+  /// yang lahir di aplikasi ini sendiri.
+  ///
+  /// Unik supaya satu struk tidak pernah memotong stok dua kali. Kasir di
+  /// desa berjalan di atas jaringan yang putus-nyambung dan akan mengirim
+  /// ulang permintaan yang jawabannya tidak pernah sampai — tanpa kunci ini,
+  /// satu penjualan tercatat berkali-kali dan stok sistem menjauh dari rak.
+  externalRef   String?                  @unique
+
   createdAt     DateTime                 @default(now())
   updatedAt     DateTime                 @updatedAt
 
   @@index([productId, createdAt])
   @@index([umkmProductId, createdAt])
+  /// Umpan pemantauan menarik pergerakan terbaru lintas produk.
+  @@index([createdAt])
 }
 
 model AuditLog {

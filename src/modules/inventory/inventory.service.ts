@@ -10,6 +10,8 @@ import {
   AdjustStockDto,
   ListTransactionsQueryDto,
   ProductRefDto,
+  LiveFeedQueryDto,
+  PosMovementDto,
   StockOpnameDto,
 } from './dto/inventory.dto';
 
@@ -167,6 +169,7 @@ export class InventoryService {
     dto: AdjustStockDto,
     umkmId: string | null,
     kopdesId: string | null = null,
+    externalRef?: string,
   ) {
     const product = await this.resolveProduct(dto, umkmId, kopdesId);
 
@@ -185,6 +188,7 @@ export class InventoryService {
       quantity: dto.quantity,
       newStock,
       reason: dto.reason,
+      externalRef,
     });
   }
 
@@ -241,6 +245,7 @@ export class InventoryService {
       quantity: number;
       newStock: number;
       reason: string;
+      externalRef?: string;
     },
   ) {
     const isKopdes = product.kind === 'KOPDES';
@@ -267,6 +272,7 @@ export class InventoryService {
           stockAfter: movement.newStock,
           reason: movement.reason,
           userId,
+          externalRef: movement.externalRef ?? null,
         },
       });
 
@@ -287,6 +293,152 @@ export class InventoryService {
     });
   }
 
+  /**
+   * Mencatat satu pergerakan stok dari kasir POS.
+   *
+   * Idempoten berdasarkan `externalRef`. Kasir di desa berjalan di atas
+   * jaringan yang putus-nyambung: ia akan mengirim ulang permintaan yang
+   * jawabannya tidak pernah sampai, dan tanpa penjagaan ini satu struk
+   * memotong stok dua kali. Kiriman ulang dijawab dengan catatan yang sama
+   * seperti kiriman pertama, ditandai `duplicate: true`, bukan error — kasir
+   * tidak punya cara membedakan "sudah masuk" dari "gagal".
+   */
+  async recordPosMovement(
+    userId: string,
+    dto: PosMovementDto,
+    umkmId: string | null,
+    kopdesId: string | null = null,
+  ) {
+    const existing = await this.findByExternalRef(dto.externalRef);
+    if (existing) return existing;
+
+    try {
+      const result = await this.adjustStock(
+        userId,
+        dto,
+        umkmId,
+        kopdesId,
+        dto.externalRef,
+      );
+      return { ...result, duplicate: false };
+    } catch (error) {
+      // Dua kiriman yang berpacu: yang kalah ditolak unique index, bukan
+      // oleh pemeriksaan di atas. Hasilnya tetap satu pergerakan.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const settled = await this.findByExternalRef(dto.externalRef);
+        if (settled) return settled;
+      }
+      throw error;
+    }
+  }
+
+  private async findByExternalRef(externalRef: string) {
+    const transaction = await this.prisma.inventoryTransaction.findUnique({
+      where: { externalRef },
+      include: {
+        product: { select: { id: true, name: true, stock: true } },
+        umkmProduct: { select: { id: true, name: true, stock: true } },
+      },
+    });
+    if (!transaction) return null;
+
+    const product = transaction.product ?? transaction.umkmProduct;
+    return {
+      product: { id: product?.id ?? '', name: product?.name ?? '' },
+      // Stok saat ini, bukan `stockAfter` catatan lama: pergerakan lain bisa
+      // terjadi di antaranya, dan kasir butuh angka yang berlaku sekarang.
+      currentStock: product?.stock ?? transaction.stockAfter ?? 0,
+      previousStock: (transaction.stockAfter ?? 0) + transaction.quantity,
+      transaction,
+      duplicate: true,
+    };
+  }
+
+  /**
+   * Umpan pemantauan stok untuk pemilik toko.
+   *
+   * Penarikan berkala, bukan dorongan dari server: backend ini berjalan
+   * sebagai fungsi serverless di Vercel, yang tidak menahan koneksi
+   * WebSocket maupun SSE hidup-hidup. Yang bisa diandalkan adalah klien
+   * bertanya "apa yang berubah sejak penanda ini".
+   *
+   * [since] HARUS berasal dari `serverTime` respons sebelumnya, bukan jam
+   * perangkat. Jam kasir dan jam ponsel pemilik tidak pernah sama persis,
+   * dan selisih beberapa detik sudah cukup untuk melewatkan satu baris atau
+   * mengirimkannya dua kali.
+   */
+  async liveFeed(
+    umkmId: string | null,
+    kopdesId: string | null,
+    since?: string,
+    limit = 50,
+  ) {
+    const take = Math.min(Math.max(limit, 1), 200);
+    const serverTime = new Date();
+
+    const scope: Prisma.InventoryTransactionWhereInput = umkmId
+      ? { umkmProduct: { umkmId } }
+      : kopdesId
+        ? {
+            OR: [
+              { product: { kopdesId } },
+              { umkmProduct: { umkm: { kopdesId } } },
+            ],
+          }
+        : {};
+
+    const where: Prisma.InventoryTransactionWhereInput = since
+      ? { ...scope, createdAt: { gt: new Date(since) } }
+      : scope;
+
+    const movements = await this.prisma.inventoryTransaction.findMany({
+      where,
+      include: {
+        product: { select: { id: true, name: true, stock: true } },
+        umkmProduct: { select: { id: true, name: true, stock: true } },
+        user: { select: { id: true, name: true } },
+      },
+      // Menaik saat menyusul dari penanda — klien menambahkannya ke ujung
+      // daftar sesuai urutan kejadian. Tanpa penanda yang dicari justru yang
+      // terbaru, jadi urutannya dibalik.
+      orderBy: { createdAt: since ? 'asc' : 'desc' },
+      take: take + 1,
+    });
+
+    const hasMore = movements.length > take;
+    const page = hasMore ? movements.slice(0, take) : movements;
+
+    return {
+      // Penanda untuk permintaan berikutnya. Saat ada yang terpotong karena
+      // batas, penanda maju hanya sampai baris terakhir yang benar-benar
+      // dikirim — kalau tidak, sisanya hilang selamanya.
+      serverTime: (hasMore && since
+        ? page[page.length - 1].createdAt
+        : serverTime
+      ).toISOString(),
+      hasMore,
+      movements: page.map((m) => {
+        const product = m.product ?? m.umkmProduct;
+        return {
+          id: m.id,
+          type: m.type,
+          quantity: m.quantity,
+          stockAfter: m.stockAfter,
+          reason: m.reason,
+          externalRef: m.externalRef,
+          createdAt: m.createdAt.toISOString(),
+          recordedBy: m.user?.name ?? null,
+          product: product
+            ? { id: product.id, name: product.name, stock: product.stock }
+            : null,
+        };
+      }),
+    };
+  }
+
   // ---- Pembungkus sisi mitra: umkmId selalu diturunkan dari akun pemanggil ----
 
   async listTransactionsForSeller(
@@ -298,6 +450,23 @@ export class InventoryService {
 
   async adjustStockForSeller(userId: string, dto: AdjustStockDto) {
     return this.adjustStock(userId, dto, await this.getUmkmIdOrThrow(userId));
+  }
+
+  async recordPosMovementForSeller(userId: string, dto: PosMovementDto) {
+    return this.recordPosMovement(
+      userId,
+      dto,
+      await this.getUmkmIdOrThrow(userId),
+    );
+  }
+
+  async liveFeedForSeller(userId: string, query: LiveFeedQueryDto) {
+    return this.liveFeed(
+      await this.getUmkmIdOrThrow(userId),
+      null,
+      query.since,
+      query.limit,
+    );
   }
 
   async stockOpnameForSeller(userId: string, dto: StockOpnameDto) {
