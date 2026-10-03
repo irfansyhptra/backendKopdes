@@ -43,14 +43,28 @@ export class AuthService {
     this.jwtSecret =
       this.configService.get<string>('JWT_SECRET') || 'default_jwt_secret';
 
-    // Parse duration like "15m" or "7d"
+    // Bentuknya "15m", "7d", "365d".
     const accessExpires =
       this.configService.get<string>('JWT_EXPIRES_IN') || '15m';
-    const refreshExpires =
-      this.configService.get<string>('REFRESH_TOKEN_EXPIRES_IN') || '7d';
 
-    this.jwtExpiresIn = this.parseDuration(accessExpires, 900); // default 15m
-    this.refreshExpiresIn = this.parseDuration(refreshExpires, 604800); // default 7d
+    /**
+     * Setahun, bukan seminggu.
+     *
+     * Refresh token DIROTASI setiap kali dipakai — tiap penyegaran
+     * menerbitkan token baru berumur penuh. Jadi pengguna yang membuka
+     * aplikasi sesekali tidak akan pernah keluar sendiri; batas ini hanya
+     * menggigit orang yang tidak membuka aplikasi sama sekali selama satu
+     * tahun penuh.
+     *
+     * Tujuh hari dulu terasa aman, tapi untuk aplikasi belanja desa yang
+     * dibuka beberapa kali sebulan, itu berarti login ulang berkala tanpa
+     * alasan yang bisa dijelaskan ke penggunanya.
+     */
+    const refreshExpires =
+      this.configService.get<string>('REFRESH_TOKEN_EXPIRES_IN') || '365d';
+
+    this.jwtExpiresIn = this.parseDuration(accessExpires, 900); // 15m
+    this.refreshExpiresIn = this.parseDuration(refreshExpires, 31536000); // 365d
   }
 
   private parseDuration(duration: string, fallback: number): number {
