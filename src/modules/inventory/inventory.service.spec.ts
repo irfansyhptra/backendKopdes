@@ -48,10 +48,58 @@ describe('InventoryService', () => {
     service = new InventoryService(prisma);
   });
 
+  describe('cache penjual', () => {
+    it('stok UMKM berubah → cache daftar produk & dasbor tokonya dibuang', async () => {
+      const cache = { delete: jest.fn(), deletePattern: jest.fn() };
+      service = new InventoryService(prisma, cache as any);
+
+      await service.adjustStock(
+        'u1',
+        {
+          umkmProductId: 'umkm-prod-1',
+          type: 'IN',
+          quantity: 3,
+          reason: 'Restok',
+        } as any,
+        MY_UMKM,
+      );
+
+      expect(cache.deletePattern).toHaveBeenCalledWith(
+        `cache:seller:products:${MY_UMKM}:*`,
+      );
+      expect(cache.delete).toHaveBeenCalledWith(
+        `cache:seller:dashboard:${MY_UMKM}`,
+      );
+    });
+
+    it('stok yang ditolak (jadi negatif) tidak menyentuh cache', async () => {
+      const cache = { delete: jest.fn(), deletePattern: jest.fn() };
+      service = new InventoryService(prisma, cache as any);
+
+      await expect(
+        service.adjustStock(
+          'u1',
+          {
+            umkmProductId: 'umkm-prod-1',
+            type: 'OUT',
+            quantity: 21,
+            reason: 'x',
+          } as any,
+          MY_UMKM,
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(cache.deletePattern).not.toHaveBeenCalled();
+    });
+  });
+
   describe('validasi referensi produk', () => {
     it('menolak kalau tidak ada produk yang ditunjuk', async () => {
       await expect(
-        service.adjustStock('u1', { type: 'IN', quantity: 1, reason: 'x' } as any, null),
+        service.adjustStock(
+          'u1',
+          { type: 'IN', quantity: 1, reason: 'x' } as any,
+          null,
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -105,7 +153,12 @@ describe('InventoryService', () => {
       await expect(
         service.adjustStock(
           'u1',
-          { umkmProductId: 'umkm-prod-9', type: 'IN', quantity: 1, reason: 'x' } as any,
+          {
+            umkmProductId: 'umkm-prod-9',
+            type: 'IN',
+            quantity: 1,
+            reason: 'x',
+          } as any,
           MY_UMKM,
         ),
       ).rejects.toThrow(ForbiddenException);
@@ -115,7 +168,12 @@ describe('InventoryService', () => {
     it('staf Kopdes boleh menyentuh produk mitra', async () => {
       const res = await service.adjustStock(
         'staff-1',
-        { umkmProductId: 'umkm-prod-1', type: 'IN', quantity: 5, reason: 'retur' } as any,
+        {
+          umkmProductId: 'umkm-prod-1',
+          type: 'IN',
+          quantity: 5,
+          reason: 'retur',
+        } as any,
         null,
       );
       expect(res.currentStock).toBe(25);
@@ -124,7 +182,9 @@ describe('InventoryService', () => {
     it('riwayat mitra tanpa filter dibatasi ke tokonya sendiri', async () => {
       await service.listTransactions({}, MY_UMKM);
       expect(prisma.inventoryTransaction.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { umkmProduct: { umkmId: MY_UMKM } } }),
+        expect.objectContaining({
+          where: { umkmProduct: { umkmId: MY_UMKM } },
+        }),
       );
     });
   });
@@ -133,7 +193,12 @@ describe('InventoryService', () => {
     it('IN menambah stok dan mencatat transaksi', async () => {
       const res = await service.adjustStock(
         'u1',
-        { productId: 'prod-1', type: 'IN', quantity: 10, reason: 'barang datang' } as any,
+        {
+          productId: 'prod-1',
+          type: 'IN',
+          quantity: 10,
+          reason: 'barang datang',
+        } as any,
         null,
       );
 
@@ -159,7 +224,12 @@ describe('InventoryService', () => {
     it('OUT mengurangi stok', async () => {
       const res = await service.adjustStock(
         'u1',
-        { productId: 'prod-1', type: 'OUT', quantity: 10, reason: 'rusak' } as any,
+        {
+          productId: 'prod-1',
+          type: 'OUT',
+          quantity: 10,
+          reason: 'rusak',
+        } as any,
         null,
       );
       expect(res.currentStock).toBe(40);
@@ -169,7 +239,12 @@ describe('InventoryService', () => {
       await expect(
         service.adjustStock(
           'u1',
-          { productId: 'prod-1', type: 'OUT', quantity: 51, reason: 'rusak' } as any,
+          {
+            productId: 'prod-1',
+            type: 'OUT',
+            quantity: 51,
+            reason: 'rusak',
+          } as any,
           null,
         ),
       ).rejects.toThrow(BadRequestException);

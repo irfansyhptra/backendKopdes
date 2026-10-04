@@ -1,10 +1,12 @@
 import {
   Injectable,
+  Optional,
   BadRequestException,
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import { CacheService } from '../../cache/cache.service';
 import { InventoryTransactionType, Prisma } from '@prisma/client';
 import {
   AdjustStockDto,
@@ -21,11 +23,18 @@ type ResolvedProduct = {
   id: string;
   name: string;
   stock: number;
+  /** Toko pemilik produk UMKM; null untuk barang Kopdes. */
+  umkmId: string | null;
 };
 
 @Injectable()
 export class InventoryService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // Opsional supaya uji unit yang membangun layanan dengan Prisma saja
+    // tetap jalan; di aplikasi CacheModule global selalu menyediakannya.
+    @Optional() private readonly cache?: CacheService,
+  ) {}
 
   /**
    * Memastikan referensi produk sah dan — bila pemanggilnya mitra UMKM —
@@ -68,6 +77,7 @@ export class InventoryService {
         id: product.id,
         name: product.name,
         stock: product.stock,
+        umkmId: null,
       };
     }
 
@@ -97,6 +107,7 @@ export class InventoryService {
       id: umkmProduct.id,
       name: umkmProduct.name,
       stock: umkmProduct.stock,
+      umkmId: umkmProduct.umkmId,
     };
   }
 
@@ -250,7 +261,7 @@ export class InventoryService {
   ) {
     const isKopdes = product.kind === 'KOPDES';
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       if (isKopdes) {
         await tx.product.update({
           where: { id: product.id },
@@ -291,6 +302,26 @@ export class InventoryService {
         transaction,
       };
     });
+
+    // Setelah commit, bukan di dalam transaksi: cache yang dibuang sebelum
+    // commit bisa terisi ulang dengan angka lama oleh pembaca yang menyela.
+    if (product.umkmId) await this.invalidateSellerCache(product.umkmId);
+    return result;
+  }
+
+  /**
+   * Daftar produk dan dasbor penjual di-cache 10 menit oleh SellerService.
+   * Tanpa ini, stok yang baru diatur — dari aplikasi maupun kasir — tetap
+   * tampil angka lamanya selama itu. Kuncinya sama dengan
+   * `SellerService.invalidateCache`.
+   */
+  private async invalidateSellerCache(umkmId: string) {
+    if (!this.cache) return;
+    await Promise.all([
+      this.cache.delete(`cache:seller:dashboard:${umkmId}`),
+      this.cache.delete(`cache:seller:stats:${umkmId}`),
+      this.cache.deletePattern(`cache:seller:products:${umkmId}:*`),
+    ]);
   }
 
   /**

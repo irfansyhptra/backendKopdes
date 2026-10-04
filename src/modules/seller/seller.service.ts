@@ -9,7 +9,25 @@ import { StorageService } from '../../storage/storage.service';
 import { CreateSellerProductDto } from './dto/create-seller-product.dto';
 import { UpdateSellerProductDto } from './dto/update-seller-product.dto';
 import { UpdateSellerProfileDto } from './dto/update-seller-profile.dto';
-import { OrderStatus } from '@prisma/client';
+import { OrderStatus, Prisma } from '@prisma/client';
+
+/**
+ * Batas stok menipis untuk produk UMKM: stok 1..5 menipis, 0 habis.
+ *
+ * Satu-satunya sumber angka ini. Dasbor memakainya untuk "Stok menipis",
+ * daftar produk memakainya untuk ringkasan dan filter, dan nilainya ikut
+ * dikirim ke aplikasi supaya label di tiap baris tidak menebak sendiri.
+ */
+export const LOW_STOCK_THRESHOLD = 5;
+
+export type StockStatusFilter = 'safe' | 'low' | 'out';
+
+/** Rentang stok tiap status — dipakai filter dan hitungan ringkasan. */
+const STOCK_RANGE: Record<StockStatusFilter, Prisma.IntFilter> = {
+  out: { lte: 0 },
+  low: { gt: 0, lte: LOW_STOCK_THRESHOLD },
+  safe: { gt: LOW_STOCK_THRESHOLD },
+};
 
 @Injectable()
 export class SellerService {
@@ -146,13 +164,21 @@ export class SellerService {
       ? Number(ratingResult._avg.rating.toFixed(1))
       : 0.0;
 
-    // 6. Low stock products (stock <= 5)
+    // 6. Produk yang perlu restok: menipis ATAU habis (stok <= ambang)
     const lowStockCount = await this.prisma.uMKMProduct.count({
-      where: { umkmId: umkm.id, stock: { lte: 5 }, isActive: true },
+      where: {
+        umkmId: umkm.id,
+        stock: { lte: LOW_STOCK_THRESHOLD },
+        isActive: true,
+      },
     });
 
     const lowStockProducts = await this.prisma.uMKMProduct.findMany({
-      where: { umkmId: umkm.id, stock: { lte: 5 }, isActive: true },
+      where: {
+        umkmId: umkm.id,
+        stock: { lte: LOW_STOCK_THRESHOLD },
+        isActive: true,
+      },
       include: { category: true },
       take: 5,
     });
@@ -275,34 +301,48 @@ export class SellerService {
     query: {
       search?: string;
       categoryId?: string;
+      stockStatus?: string;
       page?: number;
       limit?: number;
     },
   ) {
     const umkm = await this.getUmkmByUserId(userId);
-    const { search, categoryId, page = 1, limit = 10 } = query;
+    const { search, categoryId } = query;
+    const page = Math.max(query.page || 1, 1);
+    // 100, bukan lebih kecil: APK lama mencari detail produk di 100 baris
+    // pertama, dan harus tetap jalan sampai pengguna memperbarui aplikasi.
+    const limit = Math.min(Math.max(query.limit || 10, 1), 100);
     const skip = (page - 1) * limit;
+    // Nilai di luar daftar diabaikan, bukan ditolak: filter yang tidak
+    // dikenal lebih baik jatuh ke "Semua" daripada mengosongkan layar.
+    const stockStatus = (['safe', 'low', 'out'] as const).find(
+      (s) => s === query.stockStatus,
+    );
 
-    const cacheKey = `cache:seller:products:${umkm.id}:${search || ''}:${categoryId || ''}:${page}:${limit}`;
+    const cacheKey = `cache:seller:products:${umkm.id}:${search || ''}:${categoryId || ''}:${stockStatus || ''}:${page}:${limit}`;
     const cached = await this.cacheService.get<any>(cacheKey);
     if (cached) {
       return cached;
     }
 
-    const where: any = { umkmId: umkm.id };
-
+    // Pencarian + kategori. Ringkasan dihitung di atas ini — TANPA filter
+    // status stok — supaya "2 aman · 1 menipis" tetap menjelaskan apa yang
+    // ada di kategori itu walau penjual sedang melihat yang menipis saja.
+    const base: Prisma.UMKMProductWhereInput = { umkmId: umkm.id };
     if (categoryId) {
-      where.categoryId = categoryId;
+      base.categoryId = categoryId;
     }
-
     if (search) {
-      where.OR = [
+      base.OR = [
         { name: { contains: search, mode: 'insensitive' } },
         { description: { contains: search, mode: 'insensitive' } },
       ];
     }
+    const where: Prisma.UMKMProductWhereInput = stockStatus
+      ? { ...base, stock: STOCK_RANGE[stockStatus] }
+      : base;
 
-    const [products, total] = await Promise.all([
+    const [products, total, safe, low, out] = await Promise.all([
       this.prisma.uMKMProduct.findMany({
         where,
         skip,
@@ -313,44 +353,103 @@ export class SellerService {
           images: {
             orderBy: { isPrimary: 'desc' },
           },
-          reviews: true,
+          reviews: { select: { rating: true } },
         },
       }),
       this.prisma.uMKMProduct.count({ where }),
+      this.prisma.uMKMProduct.count({
+        where: { ...base, stock: STOCK_RANGE.safe },
+      }),
+      this.prisma.uMKMProduct.count({
+        where: { ...base, stock: STOCK_RANGE.low },
+      }),
+      this.prisma.uMKMProduct.count({
+        where: { ...base, stock: STOCK_RANGE.out },
+      }),
     ]);
 
-    const mappedProducts = products.map((p) => {
-      // Calculate rating & sales count
-      const avgRating =
-        p.reviews.length > 0
-          ? Number(
-              (
-                p.reviews.reduce((sum, r) => sum + r.rating, 0) /
-                p.reviews.length
-              ).toFixed(1),
-            )
-          : 0.0;
-
-      return {
-        ...p,
-        price: Number(p.price),
-        rating: avgRating,
-      };
-    });
-
-    const totalPages = Math.ceil(total / limit);
+    const totalPages = Math.max(Math.ceil(total / limit), 1);
     const result = {
-      products: mappedProducts,
+      products: products.map((p) => this.mapProduct(p)),
+      // Bentuk lama dipertahankan untuk pemanggil yang sudah ada; `meta`
+      // adalah bentuk yang dibaca `Paginated` di aplikasi.
       total,
       page,
       limit,
       totalPages,
+      meta: { total, page, limit, totalPages },
+      summary: { total: safe + low + out, safe, low, out },
+      lowStockThreshold: LOW_STOCK_THRESHOLD,
     };
 
     // Cache in Redis for 10 minutes (600 seconds)
     await this.cacheService.set(cacheKey, result, 600);
 
     return result;
+  }
+
+  /**
+   * Satu produk milik toko ini.
+   *
+   * Halaman detail dulu mencarinya di 100 produk pertama — produk ke-101
+   * terbaca "tidak ditemukan" padahal ada.
+   */
+  async getProduct(userId: string, id: string) {
+    const umkm = await this.getUmkmByUserId(userId);
+    const product = await this.prisma.uMKMProduct.findFirst({
+      where: { id, umkmId: umkm.id },
+      include: {
+        category: true,
+        images: { orderBy: { isPrimary: 'desc' } },
+        reviews: { select: { rating: true } },
+      },
+    });
+    if (!product) {
+      throw new NotFoundException('Produk tidak ditemukan di toko Anda');
+    }
+    return this.mapProduct(product);
+  }
+
+  /**
+   * Kategori yang benar-benar dipakai produk toko ini, untuk chip filter.
+   *
+   * Bukan seluruh `/categories`: chip "Elektronik" di toko yang hanya
+   * menjual makanan selalu berujung daftar kosong.
+   */
+  async getProductCategories(userId: string) {
+    const umkm = await this.getUmkmByUserId(userId);
+    const groups = await this.prisma.uMKMProduct.groupBy({
+      by: ['categoryId'],
+      where: { umkmId: umkm.id },
+      _count: { _all: true },
+    });
+    if (groups.length === 0) return [];
+
+    const categories = await this.prisma.category.findMany({
+      where: { id: { in: groups.map((g) => g.categoryId) } },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+    const counts = new Map(groups.map((g) => [g.categoryId, g._count._all]));
+    return categories.map((c) => ({
+      ...c,
+      productCount: counts.get(c.id) ?? 0,
+    }));
+  }
+
+  private mapProduct<
+    T extends { price: Prisma.Decimal; reviews: { rating: number }[] },
+  >(p: T) {
+    const { reviews, ...rest } = p;
+    const avgRating =
+      reviews.length > 0
+        ? Number(
+            (
+              reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length
+            ).toFixed(1),
+          )
+        : 0.0;
+    return { ...rest, price: Number(p.price), rating: avgRating };
   }
 
   // Create Product

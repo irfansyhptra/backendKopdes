@@ -53,15 +53,31 @@ export class SellerController {
     @Req() req: any,
     @Query('search') search?: string,
     @Query('categoryId') categoryId?: string,
+    @Query('stockStatus') stockStatus?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
     const data = await this.sellerService.getProducts(req.user.id, {
       search,
       categoryId,
+      stockStatus,
       page: page ? parseInt(page, 10) : undefined,
       limit: limit ? parseInt(limit, 10) : undefined,
     });
+    return { success: true, data };
+  }
+
+  // Dideklarasikan sebelum `products/:id` supaya "categories" tidak
+  // tertangkap sebagai id.
+  @Get('products/categories')
+  async getProductCategories(@Req() req: any) {
+    const data = await this.sellerService.getProductCategories(req.user.id);
+    return { success: true, data };
+  }
+
+  @Get('products/:id')
+  async getProduct(@Req() req: any, @Param('id') id: string) {
+    const data = await this.sellerService.getProduct(req.user.id, id);
     return { success: true, data };
   }
 
@@ -72,7 +88,11 @@ export class SellerController {
     @Body() dto: CreateSellerProductDto,
     @UploadedFiles() files?: any[],
   ) {
-    const data = await this.sellerService.createProduct(req.user.id, dto, files);
+    const data = await this.sellerService.createProduct(
+      req.user.id,
+      dto,
+      files,
+    );
     return { success: true, data };
   }
 
@@ -84,7 +104,12 @@ export class SellerController {
     @Body() dto: UpdateSellerProductDto,
     @UploadedFiles() files?: any[],
   ) {
-    const data = await this.sellerService.updateProduct(req.user.id, id, dto, files);
+    const data = await this.sellerService.updateProduct(
+      req.user.id,
+      id,
+      dto,
+      files,
+    );
     return { success: true, data };
   }
 
@@ -113,7 +138,11 @@ export class SellerController {
     @Param('id') id: string,
     @Body('status') status: OrderStatus,
   ) {
-    const data = await this.sellerService.updateOrderStatus(req.user.id, id, status);
+    const data = await this.sellerService.updateOrderStatus(
+      req.user.id,
+      id,
+      status,
+    );
     return { success: true, data };
   }
 
