@@ -475,11 +475,15 @@ export class SellerService {
       data: {
         umkmId: umkm.id,
         name: dto.name,
-        description: dto.description,
+        description: dto.description ?? '',
         price: dto.price,
         stock: dto.stock,
         categoryId: dto.categoryId,
-        isApproved: false, // UMKM products need validation
+        // Langsung tampil. UMKM-nya sudah diverifikasi Admin Kopdes saat
+        // menjadi mitra, dan Admin tetap bisa menurunkan produk lewat
+        // takedown. Dulu `false` tanpa jalur persetujuan apa pun: produk
+        // baru tidak pernah muncul di marketplace maupun bisa dibeli.
+        isApproved: true,
         isActive: true,
       },
     });
