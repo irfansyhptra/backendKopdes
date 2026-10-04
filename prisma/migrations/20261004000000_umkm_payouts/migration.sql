@@ -1,5 +1,3 @@
-npm notice run backend@0.0.1 npx
-npm notice run 'prisma' migrate diff --from-schema-datamodel /tmp/claude-1000/-home-irfan-Project-KOPDES/ca65001a-bc85-4a40-989f-c76f0f2cca6e/scratchpad/schema.before.prisma --to-schema-datamodel prisma/schema.prisma --script
 -- CreateEnum
 CREATE TYPE "PayoutStatus" AS ENUM ('REQUESTED', 'PAID', 'REJECTED');
 
