@@ -9,6 +9,7 @@ describe('OrderService — authorization', () => {
   let prisma: any;
   let cache: any;
   let service: OrderService;
+  let wallet: any;
 
   const order = (overrides: any = {}) => ({
     id: 'order-1',
@@ -42,7 +43,8 @@ describe('OrderService — authorization', () => {
     };
 
     // updateStatus & getTimeline tidak menyentuh alamat.
-    service = new OrderService(prisma, cache, {} as any);
+    wallet = { debitForOrder: jest.fn(), refundOrder: jest.fn() };
+    service = new OrderService(prisma, cache, {} as any, wallet);
   });
 
   describe('updateStatus', () => {
@@ -179,6 +181,77 @@ describe('OrderService — authorization', () => {
         service.getTimeline(OWNER, 'order-1', 'CUSTOMER'),
       ).resolves.toEqual([]);
       expect(prisma.auditLog.findMany).toHaveBeenCalled();
+    });
+  });
+
+  describe('bayar pakai saldo', () => {
+    it('dibatalkan setelah dibayar saldo → saldo dikembalikan', async () => {
+      prisma.order.findUnique.mockResolvedValue(
+        order({
+          status: 'PAID',
+          paymentMethod: 'WALLET',
+          paymentStatus: 'PAID',
+          totalAmount: 25000,
+        }),
+      );
+      await service.updateStatus(
+        'admin-1',
+        'order-1',
+        'CANCELLED' as any,
+        'SUPER_ADMIN',
+      );
+      expect(wallet.refundOrder).toHaveBeenCalledWith(
+        expect.anything(),
+        OWNER,
+        'order-1',
+        25000,
+        expect.any(String),
+      );
+    });
+
+    it('pesanan COD yang batal tidak menyentuh saldo', async () => {
+      prisma.order.findUnique.mockResolvedValue(order({ status: 'PENDING' }));
+      await service.updateStatus(
+        OWNER,
+        'order-1',
+        'CANCELLED' as any,
+        'CUSTOMER',
+      );
+      expect(wallet.refundOrder).not.toHaveBeenCalled();
+    });
+
+    it('saldo dipotong lalu pesanan & pembayaran ditandai lunas', async () => {
+      const tx = {
+        payment: { update: jest.fn() },
+        order: { update: jest.fn() },
+      };
+      const o = { id: 'order-9', status: 'PENDING', paymentStatus: 'PENDING' };
+      await (service as any).settleWalletPayment(tx, OWNER, o, 30000);
+      expect(wallet.debitForOrder).toHaveBeenCalledWith(
+        tx,
+        OWNER,
+        'order-9',
+        30000,
+      );
+      expect(tx.order.update.mock.calls[0][0].data).toEqual({
+        status: 'PAID',
+        paymentStatus: 'PAID',
+      });
+      expect(o.status).toBe('PAID');
+    });
+
+    it('saldo kurang → galat diteruskan, pesanan tidak ditandai lunas', async () => {
+      wallet.debitForOrder.mockRejectedValue(
+        new Error('Saldo tidak mencukupi.'),
+      );
+      const tx = {
+        payment: { update: jest.fn() },
+        order: { update: jest.fn() },
+      };
+      await expect(
+        (service as any).settleWalletPayment(tx, OWNER, { id: 'o' }, 1),
+      ).rejects.toThrow('Saldo tidak mencukupi');
+      expect(tx.order.update).not.toHaveBeenCalled();
     });
   });
 });

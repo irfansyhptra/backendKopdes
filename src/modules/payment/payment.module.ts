@@ -4,6 +4,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { DatabaseModule } from '../../database/database.module';
 import { CacheModule } from '../../cache/cache.module';
 import { PaymentController } from './payment.controller';
+import { PaymentReturnController } from './payment-return.controller';
 import { MidtransWebhookController } from './midtrans-webhook.controller';
 import { PaymentService } from './payment.service';
 import { MidtransModule } from './midtrans.module';
@@ -24,7 +25,11 @@ import { WalletModule } from '../wallet/wallet.module';
     // perilaku endpoint lain yang sudah berjalan.
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
   ],
-  controllers: [PaymentController, MidtransWebhookController],
+  controllers: [
+    PaymentController,
+    MidtransWebhookController,
+    PaymentReturnController,
+  ],
   providers: [PaymentService],
   exports: [PaymentService],
 })

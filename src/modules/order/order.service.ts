@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { CacheService } from '../../cache/cache.service';
+import { WalletService } from '../wallet/wallet.service';
 import { AddressService } from '../address/address.service';
 import { CheckoutDto } from './dto/checkout.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -55,7 +56,33 @@ export class OrderService {
     private readonly prisma: PrismaService,
     private readonly cache: CacheService,
     private readonly addressService: AddressService,
+    private readonly wallet: WalletService,
   ) {}
+
+  /**
+   * Bayar pakai saldo: dipotong di transaksi yang sama dengan pembuatan
+   * pesanan. Saldo kurang → seluruh pesanan batal dibuat (stok & keranjang
+   * utuh). Dompet mengunci barisnya sendiri, jadi dua pesanan bersamaan
+   * tidak bisa sama-sama lolos memakai saldo yang sama.
+   */
+  private async settleWalletPayment(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    order: { id: string; status: OrderStatus; paymentStatus: PaymentStatus },
+    amount: Prisma.Decimal,
+  ) {
+    await this.wallet.debitForOrder(tx, userId, order.id, amount);
+    await tx.payment.update({
+      where: { orderId: order.id },
+      data: { status: 'PAID', paidAt: new Date() },
+    });
+    await tx.order.update({
+      where: { id: order.id },
+      data: { status: 'PAID', paymentStatus: 'PAID' },
+    });
+    order.status = 'PAID';
+    order.paymentStatus = 'PAID';
+  }
 
   /// Kunci riwayat kini memuat halaman: satu kunci untuk seluruh riwayat
   /// berarti halaman 2 menimpa halaman 1 di cache yang sama.
@@ -281,6 +308,15 @@ export class OrderService {
           qrisCode: mockQrisCode,
         },
       });
+
+      if (dto.paymentMethod === PaymentMethod.WALLET) {
+        await this.settleWalletPayment(
+          tx,
+          userId,
+          newOrder,
+          totals.totalAmount,
+        );
+      }
 
       // Generate Invoice
       const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -517,6 +553,15 @@ export class OrderService {
           qrisCode: mockQrisCode,
         },
       });
+
+      if (dto.paymentMethod === PaymentMethod.WALLET) {
+        await this.settleWalletPayment(
+          tx,
+          userId,
+          newOrder,
+          totals.totalAmount,
+        );
+      }
 
       // Generate Invoice
       const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -902,6 +947,29 @@ export class OrderService {
 
       // If CANCELLED, restore product stocks
       if (status === 'CANCELLED' && oldStatus !== 'CANCELLED') {
+        // Pesanan yang dibayar dari saldo: uangnya kembali ke saldo.
+        // Idempoten lewat kunci `refund:{orderId}` di buku dompet.
+        if (
+          order.paymentMethod === PaymentMethod.WALLET &&
+          order.paymentStatus === 'PAID'
+        ) {
+          await this.wallet.refundOrder(
+            tx,
+            order.customerId,
+            orderId,
+            order.totalAmount,
+            'Pengembalian pesanan dibatalkan',
+          );
+          await tx.payment.update({
+            where: { orderId },
+            data: { status: 'REFUNDED' },
+          });
+          await tx.order.update({
+            where: { id: orderId },
+            data: { paymentStatus: 'REFUNDED' },
+          });
+          updated.paymentStatus = 'REFUNDED';
+        }
         for (const item of order.items) {
           if (item.productId) {
             const restoredProduct = await tx.product.update({
@@ -985,6 +1053,15 @@ export class OrderService {
 
     if (order.customerId !== userId) {
       throw new ForbiddenException('Pesanan ini bukan milik Anda');
+    }
+
+    // Hanya setelah kurir menandai barang sampai. Tanpa syarat ini pesanan
+    // yang belum diantar bisa "diterima" dan langsung COMPLETED — dan
+    // pesanan COMPLETED-lah yang masuk ke saldo penjual yang bisa dicairkan.
+    if (order.status !== OrderStatus.DELIVERED) {
+      throw new BadRequestException(
+        'Konfirmasi penerimaan baru bisa setelah kurir menandai barang sampai.',
+      );
     }
 
     const now = new Date();

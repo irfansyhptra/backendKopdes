@@ -75,7 +75,7 @@ export interface MidtransNotification {
  */
 export function chargePayloadFor(
   method: MidtransMethod,
-  callbackUrl?: string,
+  callbackUrl: string | undefined = paymentReturnUrl('success'),
 ): Record<string, unknown> {
   switch (method) {
     case 'QRIS':
@@ -114,6 +114,24 @@ export function chargePayloadFor(
 
     case 'MANDIRI_BILL':
       // Mandiri memakai bill_key + biller_code, bukan nomor VA.
-      return { payment_type: 'echannel', echannel: { bill_info1: 'Pembayaran', bill_info2: 'KOMIT' } };
+      return {
+        payment_type: 'echannel',
+        echannel: { bill_info1: 'Pembayaran', bill_info2: 'KOMIT' },
+      };
   }
+}
+
+/**
+ * URL halaman kembali-dari-pembayaran di backend ini.
+ *
+ * `PUBLIC_API_URL` = alamat publik API termasuk `/api/v1`. Kosong berarti
+ * alamat produksi Vercel. Dipakai sebagai `callback_url` GoPay/ShopeePay
+ * (pembeli dibawa ke sini setelah membayar di aplikasi e-wallet) dan
+ * disebut di panduan konfigurasi dashboard Midtrans.
+ */
+export function paymentReturnUrl(kind: 'success' | 'pending' | 'failed') {
+  const base = (
+    process.env.PUBLIC_API_URL ?? 'https://backend-kopdes.vercel.app/api/v1'
+  ).replace(/\/+$/, '');
+  return `${base}/payments/return/${kind}`;
 }

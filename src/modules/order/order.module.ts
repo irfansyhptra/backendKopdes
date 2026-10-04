@@ -1,3 +1,4 @@
+import { WalletModule } from '../wallet/wallet.module';
 import { Module } from '@nestjs/common';
 import { OrderController } from './order.controller';
 import { AdminOrderController } from './admin-order.controller';
@@ -7,7 +8,7 @@ import { CacheModule } from '../../cache/cache.module';
 import { AddressModule } from '../address/address.module';
 
 @Module({
-  imports: [DatabaseModule, CacheModule, AddressModule],
+  imports: [DatabaseModule, CacheModule, AddressModule, WalletModule],
   controllers: [OrderController, AdminOrderController],
   providers: [OrderService],
   exports: [OrderService],

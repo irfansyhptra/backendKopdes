@@ -343,6 +343,13 @@ export class DeliveryService {
     if (delivery.order.customerId !== customerId) {
       throw new BadRequestException('Pesanan ini bukan milik Anda');
     }
+    // Sama dengan `OrderService.confirmCustomerDelivery`: hanya setelah
+    // kurir menandai barang sampai.
+    if (delivery.order.status !== 'DELIVERED') {
+      throw new BadRequestException(
+        'Konfirmasi penerimaan baru bisa setelah kurir menandai barang sampai.',
+      );
+    }
 
     const now = new Date();
     const updatedOrder = await this.prisma.$transaction(async (tx) => {

@@ -61,6 +61,14 @@ class EnvironmentVariables {
   @IsOptional()
   MIDTRANS_EXPIRY_MINUTES?: string;
 
+  /**
+   * Alamat publik API termasuk `/api/v1`, untuk `callback_url` e-wallet.
+   * Kosong = https://backend-kopdes.vercel.app/api/v1.
+   */
+  @IsString()
+  @IsOptional()
+  PUBLIC_API_URL?: string;
+
   @IsString()
   @IsOptional()
   CLOUDINARY_CLOUD_NAME?: string;

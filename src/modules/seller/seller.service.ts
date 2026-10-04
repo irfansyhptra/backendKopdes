@@ -2,7 +2,9 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
+import { canTransition } from '../order/order-transitions';
 import { PrismaService } from '../../database/prisma.service';
 import { CacheService } from '../../cache/cache.service';
 import { StorageService } from '../../storage/storage.service';
@@ -32,6 +34,12 @@ const STOCK_RANGE: Record<StockStatusFilter, Prisma.IntFilter> = {
   low: { gt: 0, lte: LOW_STOCK_THRESHOLD },
   safe: { gt: LOW_STOCK_THRESHOLD },
 };
+
+/** Status yang boleh dipasang penjual sendiri. */
+const SELLER_ORDER_STATUSES: OrderStatus[] = [
+  OrderStatus.PROCESSING,
+  OrderStatus.READY_FOR_DELIVERY,
+];
 
 /** Kolom profil yang boleh dilihat pemilik toko — tanpa data akun. */
 const PROFILE_SELECT = {
@@ -784,7 +792,22 @@ export class SellerService {
       );
     }
 
-    // Update order status in DB
+    // Penjual hanya menyiapkan pesanan. Dulu status apa pun ditulis langsung
+    // — termasuk COMPLETED untuk pesanan yang belum dibayar, padahal saldo
+    // yang bisa dicairkan dihitung dari pesanan COMPLETED. Bayar, antar,
+    // selesai, dan batal punya jalurnya sendiri (webhook, kurir, pembeli,
+    // pengurus) yang juga mengurus stok dan uangnya.
+    if (!SELLER_ORDER_STATUSES.includes(status)) {
+      throw new ForbiddenException(
+        'Penjual hanya bisa menandai pesanan "Diproses" atau "Siap Diantar".',
+      );
+    }
+    if (!canTransition(order.status, status)) {
+      throw new BadRequestException(
+        `Pesanan berstatus ${order.status} tidak bisa diubah menjadi ${status}.`,
+      );
+    }
+
     const updated = await this.prisma.order.update({
       where: { id: orderId },
       data: { status },
