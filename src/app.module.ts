@@ -29,6 +29,7 @@ import { StaffModule } from './modules/staff/staff.module';
 import { PaymentModule } from './modules/payment/payment.module';
 import { WalletModule } from './modules/wallet/wallet.module';
 import { ReviewModule } from './modules/review/review.module';
+import { PayoutModule } from './modules/payout/payout.module';
 
 @Module({
   imports: [
@@ -62,6 +63,7 @@ import { ReviewModule } from './modules/review/review.module';
     PaymentModule,
     WalletModule,
     ReviewModule,
+    PayoutModule,
   ],
   controllers: [AppController],
   providers: [AppService],

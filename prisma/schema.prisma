@@ -692,6 +692,9 @@ model UMKM {
   products UMKMProduct[]
   reviews  Review[]
 
+  bankAccount UMKMBankAccount?
+  payouts     UMKMPayout[]
+
   @@index([latitude, longitude])
   @@index([category])
   @@index([kopdesId])
@@ -887,10 +890,10 @@ model InventoryTransaction {
   /// desa berjalan di atas jaringan yang putus-nyambung dan akan mengirim
   /// ulang permintaan yang jawabannya tidak pernah sampai — tanpa kunci ini,
   /// satu penjualan tercatat berkali-kali dan stok sistem menjauh dari rak.
-  externalRef   String?                  @unique
+  externalRef String? @unique
 
-  createdAt     DateTime                 @default(now())
-  updatedAt     DateTime                 @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([productId, createdAt])
   @@index([umkmProductId, createdAt])
@@ -1119,4 +1122,55 @@ model KopdesApplication {
 
   @@index([status, createdAt])
   @@index([contactEmail])
+}
+
+/// Status permintaan pencairan saldo penjual.
+enum PayoutStatus {
+  /// Diajukan penjual, menunggu pengurus Kopdes mentransfer.
+  REQUESTED
+  /// Sudah ditransfer pengurus Kopdes.
+  PAID
+  /// Ditolak; nominalnya kembali ke saldo tersedia.
+  REJECTED
+}
+
+/// Rekening tujuan pencairan milik mitra UMKM. Satu per toko.
+model UMKMBankAccount {
+  id            String   @id @default(uuid())
+  umkmId        String   @unique
+  umkm          UMKM     @relation(fields: [umkmId], references: [id], onDelete: Cascade)
+  bankName      String
+  accountNumber String
+  accountHolder String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+/// Permintaan pencairan saldo penjual.
+///
+/// Saldo penjual TIDAK disimpan sebagai angka: ia dihitung dari pesanan yang
+/// selesai dikurangi fee Kopdes dan pencairan yang diajukan/dibayar. Baris
+/// ini adalah satu-satunya "pengeluaran" dari saldo itu.
+model UMKMPayout {
+  id     String       @id @default(uuid())
+  umkmId String
+  umkm   UMKM         @relation(fields: [umkmId], references: [id], onDelete: Cascade)
+  amount Decimal      @db.Decimal(14, 2)
+  status PayoutStatus @default(REQUESTED)
+
+  /// Rekening saat diajukan, dibekukan: mengganti rekening sesudahnya tidak
+  /// boleh mengalihkan transfer yang sedang diproses.
+  bankName      String
+  accountNumber String
+  accountHolder String
+
+  requestedAt     DateTime  @default(now())
+  processedAt     DateTime?
+  processedById   String?
+  /// Nomor referensi transfer dari bank, diisi pengurus saat membayar.
+  transferRef     String?
+  rejectionReason String?
+
+  @@index([umkmId, status])
+  @@index([status, requestedAt])
 }

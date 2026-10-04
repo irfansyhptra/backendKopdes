@@ -2,6 +2,7 @@ import { Controller, Post, Get, Put, Body, UseGuards, Request, HttpCode, HttpSta
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
 @Controller('auth')
@@ -43,6 +44,17 @@ export class AuthController {
     @Body('phone') phone?: string,
   ) {
     const data = await this.authService.updateProfile(req.user.id, { name, phone });
+    return { success: true, data };
+  }
+
+  /**
+   * Mengganti kata sandi. Semua sesi lain ikut keluar; perangkat ini menerima
+   * token baru sehingga tidak perlu masuk ulang.
+   */
+  @UseGuards(JwtAuthGuard)
+  @Put('password')
+  async changePassword(@Request() req: any, @Body() dto: ChangePasswordDto) {
+    const data = await this.authService.changePassword(req.user.id, dto);
     return { success: true, data };
   }
 }

@@ -10,6 +10,10 @@ import { CreateSellerProductDto } from './dto/create-seller-product.dto';
 import { UpdateSellerProductDto } from './dto/update-seller-product.dto';
 import { UpdateSellerProfileDto } from './dto/update-seller-profile.dto';
 import { OrderStatus, Prisma } from '@prisma/client';
+import {
+  isOpenNow,
+  normalizeOperatingHours,
+} from '../koperasi/opening-hours.util';
 
 /**
  * Batas stok menipis untuk produk UMKM: stok 1..5 menipis, 0 habis.
@@ -28,6 +32,29 @@ const STOCK_RANGE: Record<StockStatusFilter, Prisma.IntFilter> = {
   low: { gt: 0, lte: LOW_STOCK_THRESHOLD },
   safe: { gt: LOW_STOCK_THRESHOLD },
 };
+
+/** Kolom profil yang boleh dilihat pemilik toko — tanpa data akun. */
+const PROFILE_SELECT = {
+  id: true,
+  businessName: true,
+  description: true,
+  address: true,
+  phone: true,
+  category: true,
+  photoUrl: true,
+  operatingHours: true,
+  status: true,
+  rejectionReason: true,
+  verifiedAt: true,
+  latitude: true,
+  longitude: true,
+  kopdes: { select: { id: true, name: true } },
+} satisfies Prisma.UMKMSelect;
+
+/** `isOpen`: true/false, atau null bila jam buka belum diisi. */
+const withOpenNow = <T extends { operatingHours: Prisma.JsonValue }>(
+  umkm: T,
+) => ({ ...umkm, isOpen: isOpenNow(umkm.operatingHours) });
 
 @Injectable()
 export class SellerService {
@@ -278,21 +305,54 @@ export class SellerService {
   }
 
   // Profile Retrieval & Update
+  /**
+   * Profil toko untuk pemiliknya.
+   *
+   * Kolom dipilih satu per satu. Versi sebelumnya mengembalikan baris UMKM
+   * dengan `include: { user: true }` apa adanya — termasuk hash kata sandi
+   * pemilik toko, terkirim ke ponsel di setiap pembukaan tab Toko.
+   */
   async getProfile(userId: string) {
-    return this.getUmkmByUserId(userId);
+    const umkm = await this.prisma.uMKM.findUnique({
+      where: { userId },
+      select: PROFILE_SELECT,
+    });
+    if (!umkm) {
+      throw new NotFoundException('UMKM profile not found for this user');
+    }
+    return withOpenNow(umkm);
   }
 
   async updateProfile(userId: string, dto: UpdateSellerProfileDto) {
     const umkm = await this.getUmkmByUserId(userId);
 
+    let operatingHours: Prisma.InputJsonValue | undefined;
+    if (dto.operatingHours !== undefined) {
+      try {
+        operatingHours = normalizeOperatingHours(
+          dto.operatingHours,
+        ) as Prisma.InputJsonObject;
+      } catch (e) {
+        throw new BadRequestException((e as Error).message);
+      }
+    }
+
     const updated = await this.prisma.uMKM.update({
       where: { id: umkm.id },
-      data: dto,
+      data: {
+        businessName: dto.businessName,
+        description: dto.description,
+        address: dto.address,
+        phone: dto.phone,
+        category: dto.category,
+        operatingHours,
+      },
+      select: PROFILE_SELECT,
     });
 
     await this.invalidateCache(umkm.id);
 
-    return updated;
+    return withOpenNow(updated);
   }
 
   // Product List (with caching)

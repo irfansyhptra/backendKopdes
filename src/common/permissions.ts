@@ -42,6 +42,8 @@ export const Permission = {
   MITRA_VERIFY: 'mitra:verify',
   UMKM_PRODUCT_TAKEDOWN: 'umkm:product:takedown',
   UMKM_LOCATION_UPDATE: 'umkm:location:update',
+  /** Mentransfer atau menolak pencairan saldo mitra UMKM. Uang keluar. */
+  PAYOUT_PROCESS: 'payout:process',
 
   // AI
   AI_ASSIST: 'ai:assist',
@@ -105,6 +107,8 @@ const ADMIN_DEFAULTS: PermissionKey[] = [
   Permission.MITRA_VERIFY,
   Permission.UMKM_PRODUCT_TAKEDOWN,
   Permission.UMKM_LOCATION_UPDATE,
+  // Mencairkan uang mitra adalah keputusan pengurus, bukan tugas harian.
+  Permission.PAYOUT_PROCESS,
   Permission.AI_EXECUTIVE,
   Permission.KOPDES_POLICY_MANAGE,
   // Keanggotaan menentukan siapa yang berhak atas layanan anggota, jadi

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   UnauthorizedException,
   ConflictException,
@@ -187,6 +188,36 @@ export class AuthService {
     // Rotate refresh token
     await this.prisma.refreshToken.delete({ where: { id: storedToken.id } });
     return this.generateAuthResponse(storedToken.user);
+  }
+
+  async changePassword(
+    userId: string,
+    dto: { currentPassword: string; newPassword: string },
+  ) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    if (!PasswordHelper.verify(dto.currentPassword, user.password)) {
+      // 400, bukan 401: 401 membuat aplikasi menganggap sesinya habis dan
+      // mengeluarkan pengguna, padahal ia hanya salah ketik.
+      throw new BadRequestException('Kata sandi saat ini salah.');
+    }
+    if (PasswordHelper.verify(dto.newPassword, user.password)) {
+      throw new BadRequestException(
+        'Kata sandi baru harus berbeda dari yang sekarang.',
+      );
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      // Kata sandi diganti biasanya karena khawatir ada yang tahu: semua
+      // refresh token lama dicabut, jadi perangkat lain keluar.
+      await tx.refreshToken.deleteMany({ where: { userId } });
+      return tx.user.update({
+        where: { id: userId },
+        data: { password: PasswordHelper.hash(dto.newPassword) },
+      });
+    });
+    return this.generateAuthResponse(updated);
   }
 
   async me(userId: string) {
