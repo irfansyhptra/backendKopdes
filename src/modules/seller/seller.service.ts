@@ -67,6 +67,20 @@ export class SellerService {
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
+    // Jumlah TRANSAKSI, bukan jumlah baris barang: satu pesanan berisi tiga
+    // barang tetap satu transaksi. `orderItem.findMany` di bawah menghitung
+    // omzetnya, dan memakai panjangnya sebagai jumlah transaksi akan
+    // melebih-lebihkan hari yang pembelinya memborong.
+    const todayOrders = await this.prisma.order.count({
+      where: {
+        items: { some: { umkmProduct: { umkmId: umkm.id } } },
+        status: {
+          in: [OrderStatus.PAID, OrderStatus.DELIVERED, OrderStatus.COMPLETED],
+        },
+        createdAt: { gte: startOfToday },
+      },
+    });
+
     const todayEarningsResult = await this.prisma.orderItem.findMany({
       where: {
         umkmProduct: { umkmId: umkm.id },
@@ -91,6 +105,16 @@ export class SellerService {
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
+
+    const monthlyOrders = await this.prisma.order.count({
+      where: {
+        items: { some: { umkmProduct: { umkmId: umkm.id } } },
+        status: {
+          in: [OrderStatus.PAID, OrderStatus.DELIVERED, OrderStatus.COMPLETED],
+        },
+        createdAt: { gte: startOfMonth },
+      },
+    });
 
     const monthlyEarningsResult = await this.prisma.orderItem.findMany({
       where: {
@@ -207,7 +231,9 @@ export class SellerService {
         totalOrders,
         productsSold,
         todayEarnings,
+        todayOrders,
         monthlyEarnings,
+        monthlyOrders,
         storeRating,
         lowStockCount,
         newOrdersCount,
