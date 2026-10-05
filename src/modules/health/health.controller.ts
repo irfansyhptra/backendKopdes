@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { CacheService } from '../../cache/cache.service';
 import { StorageService } from '../../storage/storage.service';
@@ -22,20 +22,49 @@ export class HealthController {
     }
   }
 
-  @Get()
-  async checkAll() {
-    const [dbHealthy, redisHealthy, storageHealthy, qdrantHealthy] = await Promise.all([
+  private async report() {
+    const [database, redis, storage, qdrant] = await Promise.all([
       this.checkDatabase(),
       this.cacheService.checkHealth(),
       this.storageService.checkHealth(),
       this.qdrantService.checkHealth(),
     ]);
+    return { database, redis, storage, qdrant };
+  }
+
+  @Get('live')
+  live() {
+    return { status: 'ok', api: 'ok' };
+  }
+
+  @Get('ready')
+  async ready() {
+    const checks = await this.report();
+    const data = {
+      status: Object.values(checks).every(Boolean) ? 'ok' : 'error',
+      ...Object.fromEntries(
+        Object.entries(checks).map(([key, value]) => [
+          key,
+          value ? 'ok' : 'error',
+        ]),
+      ),
+      api: 'ok',
+    };
+    if (data.status !== 'ok') {
+      throw new ServiceUnavailableException(data);
+    }
+    return data;
+  }
+
+  @Get()
+  async checkAll() {
+    const checks = await this.report();
 
     return {
-      database: dbHealthy ? 'ok' : 'error',
-      redis: redisHealthy ? 'ok' : 'error',
-      storage: storageHealthy ? 'ok' : 'error',
-      qdrant: qdrantHealthy ? 'ok' : 'error',
+      database: checks.database ? 'ok' : 'error',
+      redis: checks.redis ? 'ok' : 'error',
+      storage: checks.storage ? 'ok' : 'error',
+      qdrant: checks.qdrant ? 'ok' : 'error',
       api: 'ok',
     };
   }
@@ -49,7 +78,10 @@ export class HealthController {
   @Get('redis')
   async checkRedis() {
     const healthy = await this.cacheService.checkHealth();
-    return { status: healthy ? 'ok' : 'error', redis: healthy ? 'PONG' : 'ERROR' };
+    return {
+      status: healthy ? 'ok' : 'error',
+      redis: healthy ? 'PONG' : 'ERROR',
+    };
   }
 
   @Get('storage')

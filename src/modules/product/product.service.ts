@@ -85,50 +85,21 @@ export class ProductService {
     }
 
     // Execute queries
-    let products, total;
-    try {
-      [products, total] = await Promise.all([
-        this.prisma.product.findMany({
-          where,
-          skip,
-          take: limit,
-          orderBy: { [sortBy]: sortOrder },
-          include: {
-            category: true,
-            images: {
-              orderBy: { isPrimary: 'desc' },
-            },
+    const [products, total] = await Promise.all([
+      this.prisma.product.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { [sortBy]: sortOrder },
+        include: {
+          category: true,
+          images: {
+            orderBy: { isPrimary: 'desc' },
           },
-        }),
-        this.prisma.product.count({ where }),
-      ]);
-    } catch (err: any) {
-      if (err?.code === 'P2022') {
-        await this.prisma.$executeRawUnsafe(`
-          ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "isPreOrderAllowed" BOOLEAN NOT NULL DEFAULT false;
-          ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "preOrderAvailableAt" TIMESTAMP(3);
-          ALTER TABLE "UMKMProduct" ADD COLUMN IF NOT EXISTS "isPreOrderAllowed" BOOLEAN NOT NULL DEFAULT false;
-          ALTER TABLE "UMKMProduct" ADD COLUMN IF NOT EXISTS "preOrderAvailableAt" TIMESTAMP(3);
-        `);
-        [products, total] = await Promise.all([
-          this.prisma.product.findMany({
-            where,
-            skip,
-            take: limit,
-            orderBy: { [sortBy]: sortOrder },
-            include: {
-              category: true,
-              images: {
-                orderBy: { isPrimary: 'desc' },
-              },
-            },
-          }),
-          this.prisma.product.count({ where }),
-        ]);
-      } else {
-        throw err;
-      }
-    }
+        },
+      }),
+      this.prisma.product.count({ where }),
+    ]);
 
     const totalPages = Math.ceil(total / limit);
 

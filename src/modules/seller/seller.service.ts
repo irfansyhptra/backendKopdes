@@ -870,7 +870,7 @@ export class SellerService {
     }
 
     // "Siap Diantar" dari penjual = diserahkan ke kurir Kopdes.
-    const updated = await this.prisma.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx) => {
       const row = await tx.order.update({
         where: { id: orderId },
         data: { status },
@@ -882,8 +882,11 @@ export class SellerService {
     });
 
     await this.invalidateCache(umkm.id);
-
-    return updated;
+    // Kembalikan bentuk yang sama dengan GET /seller/orders/:id. Respons
+    // `order.update` hanya berisi kolom Order; aplikasi kemudian mencoba
+    // membaca customer, alamat, item, dan delivery lalu menganggap tindakan
+    // gagal meski status COD sebenarnya sudah tersimpan.
+    return this.getOrderDetail(userId, orderId);
   }
 
   // ── Pembatalan ───────────────────────────────────────────────

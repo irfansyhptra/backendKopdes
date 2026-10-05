@@ -30,6 +30,9 @@ class EnvironmentVariables {
   DATABASE_URL!: string;
 
   @IsString()
+  DIRECT_URL!: string;
+
+  @IsString()
   REDIS_URL!: string;
 
   @IsString()
@@ -42,6 +45,11 @@ class EnvironmentVariables {
   @IsString()
   @IsOptional()
   REFRESH_TOKEN_EXPIRES_IN = '7d';
+
+  /** Origin web yang diizinkan, dipisahkan koma. Mendukung `https://*.vercel.app`. */
+  @IsString()
+  @IsOptional()
+  CORS_ORIGINS?: string;
 
   /**
    * Cloudinary menggantikan Supabase Storage.

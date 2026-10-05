@@ -23,9 +23,7 @@ export class CartService {
   }
 
   async getOrCreateCart(userId: string) {
-    let cart;
-    try {
-      cart = await this.prisma.cart.findUnique({
+    let cart = await this.prisma.cart.findUnique({
         where: { userId },
         include: {
           items: {
@@ -47,42 +45,7 @@ export class CartService {
             },
           },
         },
-      });
-    } catch (err: any) {
-      if (err?.code === 'P2022') {
-        await this.prisma.$executeRawUnsafe(`
-          ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "isPreOrderAllowed" BOOLEAN NOT NULL DEFAULT false;
-          ALTER TABLE "Product" ADD COLUMN IF NOT EXISTS "preOrderAvailableAt" TIMESTAMP(3);
-          ALTER TABLE "UMKMProduct" ADD COLUMN IF NOT EXISTS "isPreOrderAllowed" BOOLEAN NOT NULL DEFAULT false;
-          ALTER TABLE "UMKMProduct" ADD COLUMN IF NOT EXISTS "preOrderAvailableAt" TIMESTAMP(3);
-        `);
-        cart = await this.prisma.cart.findUnique({
-          where: { userId },
-          include: {
-            items: {
-              include: {
-                product: {
-                  include: {
-                    images: true,
-                    kopdes: { select: { id: true, name: true } },
-                  },
-                },
-                umkmProduct: {
-                  include: {
-                    images: true,
-                    umkm: {
-                      select: { id: true, businessName: true, status: true },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        });
-      } else {
-        throw err;
-      }
-    }
+    });
 
     if (!cart) {
       cart = await this.prisma.cart.create({

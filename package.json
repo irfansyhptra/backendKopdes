@@ -6,8 +6,10 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
-    "build": "node scripts/migrate-deploy.js && prisma generate && nest build",
-    "vercel-build": "node scripts/migrate-deploy.js && prisma generate && nest build",
+    "build": "prisma generate && nest build",
+    "vercel-build": "prisma generate && nest build",
+    "db:migrate:deploy": "node scripts/migrate-deploy.js",
+    "db:migrate:status": "node scripts/migrate-deploy.js status",
     "postinstall": "prisma generate",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
