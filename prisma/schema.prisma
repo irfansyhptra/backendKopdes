@@ -353,9 +353,9 @@ model CustomerEmailVerification {
 }
 
 model Address {
-  id            String   @id @default(uuid())
+  id            String  @id @default(uuid())
   userId        String
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user          User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   title         String
   recipientName String
   phone         String
@@ -363,9 +363,18 @@ model Address {
   city          String
   state         String
   postalCode    String
-  isDefault     Boolean  @default(false)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  isDefault     Boolean @default(false)
+
+  /// Titik rumah, diisi pembeli lewat "Gunakan lokasi saya".
+  ///
+  /// Null untuk alamat lama dan untuk pembeli yang menolak izin lokasi —
+  /// kurir masih bisa mengantar dengan teks alamatnya, hanya tanpa peta.
+  /// Jangan ganti dengan 0,0: koordinat itu nyata, di Teluk Guinea.
+  latitude  Float?
+  longitude Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   orders Order[]
 }
@@ -660,20 +669,36 @@ model PaymentWebhookEvent {
 }
 
 model Delivery {
-  id                       String         @id @default(uuid())
-  orderId                  String         @unique
-  order                    Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  courierId                String?
-  courier                  User?          @relation("CourierDeliveries", fields: [courierId], references: [id])
-  status                   DeliveryStatus @default(ASSIGNED)
+  id        String         @id @default(uuid())
+  orderId   String         @unique
+  order     Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  courierId String?
+  courier   User?          @relation("CourierDeliveries", fields: [courierId], references: [id])
+  status    DeliveryStatus @default(ASSIGNED)
+
+  /// Saat kurir mengambil tugas ini — lewat "Ambil Tugas" atau menerima
+  /// penugasan pengurus. Null selama pengantaran masih di kumpulan terbuka.
+  acceptedAt DateTime?
+
+  /// Saat barang benar-benar keluar toko. Inilah yang memindahkan pesanan
+  /// ke OUT_FOR_DELIVERY, bukan penugasan kurirnya.
+  pickedUpAt DateTime?
+
+  /// Posisi kurir saat menekan "Barang Sudah Diantar" — sisi kurir dari
+  /// dual-validation. Null bila GPS mati saat itu.
+  deliveredLatitude  Float?
+  deliveredLongitude Float?
+
   courierMarkedDeliveredAt DateTime?
   customerConfirmedAt      DateTime?
   estimatedDeliveryTime    DateTime?
   actualDeliveryTime       DateTime?
-  createdAt                DateTime       @default(now())
-  updatedAt                DateTime       @updatedAt
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
 
   locations DeliveryLocation[]
+
+  @@index([courierId, status])
 }
 
 model DeliveryLocation {

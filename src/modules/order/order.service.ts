@@ -1004,10 +1004,10 @@ export class OrderService {
         }
       }
 
-      // Penyerahan ke kurir. COD yang diantar tidak menunggu pembayaran apa
-      // pun, jadi "Proses" langsung meneruskannya ke kurir — pengurus tidak
-      // perlu lagi menandai "Siap Dikirim" lalu menugaskan kurir sendiri.
-      // Pesanan lain diserahkan saat ditandai siap dikirim.
+      // Penyerahan ke kumpulan tugas kurir. COD yang diantar tidak menunggu
+      // pembayaran apa pun, jadi "Proses" sudah cukup untuk menawarkannya ke
+      // kurir — pengurus tidak perlu menandai "Siap Dikirim" lebih dulu.
+      // Pesanan lain masuk kumpulan saat ditandai siap dikirim.
       const handOver =
         status === OrderStatus.READY_FOR_DELIVERY ||
         (status === OrderStatus.PROCESSING &&

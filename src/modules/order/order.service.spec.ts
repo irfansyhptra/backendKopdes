@@ -182,7 +182,7 @@ describe('OrderService — authorization', () => {
       expect(prisma.$transaction).toHaveBeenCalled();
     });
 
-    it('COD diantar: "Proses" langsung menyerahkan ke kurir paling luang', async () => {
+    it('COD diantar: "Proses" menaruhnya di kumpulan tugas kurir', async () => {
       prisma.order.findUnique.mockResolvedValue(order({ status: 'PENDING' }));
       prisma.order.findFirst.mockResolvedValue({ id: 'order-1' });
 
@@ -194,32 +194,12 @@ describe('OrderService — authorization', () => {
         'kop-1',
       );
 
-      expect(tx.user.findMany.mock.calls[0][0].where).toEqual({
-        role: 'COURIER',
-        kopdesId: 'kop-1',
-      });
-      expect(tx.delivery.upsert.mock.calls[0][0].create).toMatchObject({
+      // Tanpa kurir: kurir Kopdes yang mengambilnya sendiri.
+      expect(tx.delivery.upsert.mock.calls[0][0].create).toEqual({
         orderId: 'order-1',
-        courierId: 'kurir-luang',
         status: 'ASSIGNED',
       });
-      expect(res.status).toBe('OUT_FOR_DELIVERY');
-    });
-
-    it('COD tanpa kurir di Kopdes: menunggu di Siap Dikirim', async () => {
-      prisma.order.findUnique.mockResolvedValue(order({ status: 'PENDING' }));
-      prisma.order.findFirst.mockResolvedValue({ id: 'order-1' });
-      tx.user.findMany.mockResolvedValue([]);
-
-      const res = await service.updateStatus(
-        'admin-1',
-        'order-1',
-        'PROCESSING' as any,
-        'ADMIN_KOPDES',
-        'kop-1',
-      );
-
-      expect(tx.delivery.upsert.mock.calls[0][0].create.courierId).toBeNull();
+      expect(tx.user.findMany).not.toHaveBeenCalled();
       expect(res.status).toBe('READY_FOR_DELIVERY');
     });
 

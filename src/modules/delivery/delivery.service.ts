@@ -155,7 +155,9 @@ export class DeliveryService {
 
     const updated = await this.prisma.delivery.update({
       where: { id: deliveryId },
-      data: { courierId, status: DeliveryStatus.ASSIGNED },
+      // Penugasan dari pengurus berhenti di ASSIGNED: kurirnya belum tentu
+      // tahu, apalagi menyanggupi. Ia menerimanya sendiri di aplikasi kurir.
+      data: { courierId, status: DeliveryStatus.ASSIGNED, acceptedAt: null },
       include: {
         courier: { select: { id: true, name: true, phone: true } },
         order: {
@@ -165,12 +167,6 @@ export class DeliveryService {
           },
         },
       },
-    });
-
-    // Pesanan yang menunggu kurir kini berangkat bersama kurirnya.
-    await this.prisma.order.updateMany({
-      where: { id: delivery.orderId, status: 'READY_FOR_DELIVERY' },
-      data: { status: 'OUT_FOR_DELIVERY' },
     });
 
     await this.writeAudit(actor?.id, 'DELIVERY_ASSIGN', {
@@ -211,7 +207,11 @@ export class DeliveryService {
 
     const updated = await this.prisma.delivery.update({
       where: { id: deliveryId },
-      data: { courierId: null, status: DeliveryStatus.ASSIGNED },
+      data: {
+        courierId: null,
+        status: DeliveryStatus.ASSIGNED,
+        acceptedAt: null,
+      },
       include: {
         order: {
           include: {
@@ -220,12 +220,6 @@ export class DeliveryService {
           },
         },
       },
-    });
-
-    // Barang belum diambil: pesanan kembali menunggu kurir.
-    await this.prisma.order.updateMany({
-      where: { id: delivery.orderId, status: 'OUT_FOR_DELIVERY' },
-      data: { status: 'READY_FOR_DELIVERY' },
     });
 
     await this.writeAudit(actor?.id, 'DELIVERY_UNASSIGN', {
@@ -277,7 +271,12 @@ export class DeliveryService {
   }
 
   // 2. Dual Validation Step 1: Kurir marks "[Barang Sudah Diantar]"
-  async markCourierDelivered(deliveryId: string, courierId: string) {
+  async markCourierDelivered(
+    deliveryId: string,
+    courierId: string,
+    /** Posisi kurir saat menekan tombol. Null bila GPS-nya mati. */
+    at?: { latitude: number; longitude: number },
+  ) {
     const delivery = await this.prisma.delivery.findUnique({
       where: { id: deliveryId },
       include: { order: true },
@@ -293,6 +292,21 @@ export class DeliveryService {
       );
     }
 
+    // Barang yang belum diambil tidak mungkin sudah diantar. Tanpa syarat
+    // ini satu ketukan bisa melompati pengambilan barang, dan pesanan COD
+    // tercatat terkirim tanpa pernah meninggalkan toko.
+    if (
+      delivery.status !== DeliveryStatus.PICKED_UP &&
+      delivery.status !== DeliveryStatus.IN_TRANSIT
+    ) {
+      throw new BadRequestException(
+        delivery.status === DeliveryStatus.ASSIGNED ||
+          delivery.status === DeliveryStatus.ACCEPTED
+          ? 'Tandai "Barang Diambil" lebih dulu'
+          : 'Pengantaran ini sudah ditandai selesai',
+      );
+    }
+
     const now = new Date();
     const updatedDelivery = await this.prisma.$transaction(async (tx) => {
       const del = await tx.delivery.update({
@@ -301,6 +315,8 @@ export class DeliveryService {
           status: DeliveryStatus.COURIER_DELIVERED,
           courierMarkedDeliveredAt: now,
           actualDeliveryTime: now,
+          deliveredLatitude: at?.latitude ?? null,
+          deliveredLongitude: at?.longitude ?? null,
         },
         include: {
           order: {
@@ -483,6 +499,8 @@ export class DeliveryService {
                 recipientName: true,
                 street: true,
                 city: true,
+                latitude: true,
+                longitude: true,
               },
             },
           },
@@ -544,6 +562,16 @@ export class DeliveryService {
       throw new BadRequestException(
         'Anda bukan kurir penanggung jawab pengiriman ini',
       );
+    }
+
+    // Titik pertama setelah barang diambil membuktikan kurirnya bergerak,
+    // jadi IN_TRANSIT dinaikkan di sini — bukan lewat tombol tersendiri yang
+    // harus diingat kurir sambil berkendara.
+    if (delivery.status === DeliveryStatus.PICKED_UP) {
+      await this.prisma.delivery.update({
+        where: { id: deliveryId },
+        data: { status: DeliveryStatus.IN_TRANSIT },
+      });
     }
 
     return this.prisma.deliveryLocation.create({

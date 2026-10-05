@@ -56,7 +56,12 @@ describe('DeliveryService', () => {
   describe('listCouriers', () => {
     it('should list all couriers with active load count', async () => {
       const mockCouriers = [
-        { id: 'courier-1', name: 'Kurir Budi', email: 'budi@kopdes.id', phone: '0812' },
+        {
+          id: 'courier-1',
+          name: 'Kurir Budi',
+          email: 'budi@kopdes.id',
+          phone: '0812',
+        },
       ];
       mockPrismaService.user.findMany.mockResolvedValue(mockCouriers);
       mockPrismaService.delivery.count.mockResolvedValue(2);
@@ -78,6 +83,8 @@ describe('DeliveryService', () => {
         id: 'del-1',
         courierId: 'courier-1',
         orderId: 'order-1',
+        // Barang sudah di tangan kurir — syarat menandai sudah diantar.
+        status: DeliveryStatus.PICKED_UP,
         order: { customerId: 'cust-1' },
       };
 
@@ -87,8 +94,20 @@ describe('DeliveryService', () => {
         status: DeliveryStatus.COURIER_DELIVERED,
       });
 
-      const result = await service.markCourierDelivered('del-1', 'courier-1');
+      const result = await service.markCourierDelivered('del-1', 'courier-1', {
+        latitude: 5.55,
+        longitude: 95.31,
+      });
       expect(result.status).toBe(DeliveryStatus.COURIER_DELIVERED);
+      // Posisi kurir saat menandai ikut tersimpan sebagai bukti.
+      expect(prisma.delivery.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            deliveredLatitude: 5.55,
+            deliveredLongitude: 95.31,
+          }),
+        }),
+      );
       expect(prisma.notification.create).toHaveBeenCalled();
       expect(prisma.auditLog.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
@@ -105,15 +124,32 @@ describe('DeliveryService', () => {
       };
       mockPrismaService.delivery.findUnique.mockResolvedValue(mockDelivery);
 
-      await expect(service.markCourierDelivered('del-1', 'courier-1')).rejects.toThrow(
-        'Pengantaran ini tidak ditugaskan kepada Anda',
-      );
+      await expect(
+        service.markCourierDelivered('del-1', 'courier-1'),
+      ).rejects.toThrow('Pengantaran ini tidak ditugaskan kepada Anda');
+    });
+
+    it('barang belum diambil tidak bisa ditandai sudah diantar', async () => {
+      mockPrismaService.delivery.findUnique.mockResolvedValue({
+        id: 'del-1',
+        courierId: 'courier-1',
+        orderId: 'order-1',
+        status: DeliveryStatus.ACCEPTED,
+      });
+
+      await expect(
+        service.markCourierDelivered('del-1', 'courier-1'),
+      ).rejects.toThrow('Tandai "Barang Diambil" lebih dulu');
     });
   });
 
   describe('updateCourierLocation', () => {
     it('should insert new delivery GPS location record', async () => {
-      const mockDelivery = { id: 'del-1', courierId: 'courier-1' };
+      const mockDelivery = {
+        id: 'del-1',
+        courierId: 'courier-1',
+        status: DeliveryStatus.PICKED_UP,
+      };
       mockPrismaService.delivery.findUnique.mockResolvedValue(mockDelivery);
       mockPrismaService.deliveryLocation.create.mockResolvedValue({
         id: 'loc-1',
@@ -122,7 +158,12 @@ describe('DeliveryService', () => {
         longitude: 110.37,
       });
 
-      const result = await service.updateCourierLocation('del-1', 'courier-1', -7.75, 110.37);
+      const result = await service.updateCourierLocation(
+        'del-1',
+        'courier-1',
+        -7.75,
+        110.37,
+      );
       expect(result.latitude).toBe(-7.75);
       expect(prisma.deliveryLocation.create).toHaveBeenCalledWith({
         data: expect.objectContaining({

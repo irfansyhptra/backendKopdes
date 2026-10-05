@@ -1,6 +1,32 @@
-import { IsBoolean, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsBoolean,
+  IsLatitude,
+  IsLongitude,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
-export class CreateAddressDto {
+/**
+ * Titik rumah, dari tombol "Gunakan lokasi saya" di form alamat.
+ *
+ * Opsional di kedua DTO: izin lokasi boleh ditolak, dan alamat tanpa titik
+ * tetap bisa diantar — kurir membaca teks alamatnya.
+ */
+class AddressPoint {
+  @Type(() => Number)
+  @IsLatitude({ message: 'Koordinat lintang tidak sah.' })
+  @IsOptional()
+  latitude?: number;
+
+  @Type(() => Number)
+  @IsLongitude({ message: 'Koordinat bujur tidak sah.' })
+  @IsOptional()
+  longitude?: number;
+}
+
+export class CreateAddressDto extends AddressPoint {
   // Label yang dipilih pengguna, mis. "Rumah", "Warung".
   @IsString()
   @IsNotEmpty()
@@ -35,7 +61,7 @@ export class CreateAddressDto {
   isDefault?: boolean;
 }
 
-export class UpdateAddressDto {
+export class UpdateAddressDto extends AddressPoint {
   @IsString()
   @IsNotEmpty()
   @IsOptional()

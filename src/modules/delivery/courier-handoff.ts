@@ -3,30 +3,22 @@ import {
   FulfillmentMethod,
   OrderStatus,
   Prisma,
-  Role,
 } from '@prisma/client';
 
-/** Pengantaran yang masih dipegang kurir — penentu beban kerjanya. */
-const ACTIVE: DeliveryStatus[] = [
-  DeliveryStatus.ASSIGNED,
-  DeliveryStatus.ACCEPTED,
-  DeliveryStatus.PICKED_UP,
-  DeliveryStatus.IN_TRANSIT,
-];
-
 /**
- * Menyerahkan pesanan antar ke kurir Kopdes-nya, di dalam transaksi pemanggil.
+ * Menaruh pesanan antar ke kumpulan tugas kurir, di dalam transaksi pemanggil.
  *
  * Sebelumnya tidak ada jalur yang membuat baris `Delivery` untuk pesanan
  * sungguhan, jadi pesanan "Siap Dikirim" tidak pernah sampai ke kurir mana
- * pun. Kurir dipilih yang beban aktifnya paling sedikit. Bila Kopdes belum
- * punya kurir, pengantarannya tetap dibuat tanpa kurir dan pesanan menunggu
- * di READY_FOR_DELIVERY sampai pengurus menugaskan seseorang.
+ * pun. Sekarang pengantarannya dibuat tanpa kurir: kurir Kopdes melihatnya
+ * di daftar tugas tersedia dan mengambilnya sendiri. Pengurus tidak perlu
+ * menugaskan siapa pun, tetapi tetap bisa — lewat `assignCourier` — bila
+ * sebuah tugas terlalu lama tidak diambil.
  *
  * Pesanan ambil sendiri tidak disentuh. Idempoten: pengantaran yang sudah
- * ada dipakai ulang, kurirnya tidak diganti.
+ * ada dibiarkan apa adanya, termasuk kurir yang sudah memegangnya.
  *
- * @returns status pesanan setelah penyerahan.
+ * @returns status pesanan setelah penyerahan, atau null bila bukan antar.
  */
 export async function handOverToCourier(
   tx: Prisma.TransactionClient,
@@ -34,52 +26,23 @@ export async function handOverToCourier(
 ): Promise<OrderStatus | null> {
   const order = await tx.order.findUnique({
     where: { id: orderId },
-    select: {
-      fulfillment: true,
-      delivery: { select: { courierId: true } },
-      items: {
-        take: 1,
-        select: {
-          product: { select: { kopdesId: true } },
-          umkmProduct: { select: { umkm: { select: { kopdesId: true } } } },
-        },
-      },
-    },
+    select: { fulfillment: true },
   });
   if (!order || order.fulfillment !== FulfillmentMethod.DELIVERY) return null;
 
-  let courierId = order.delivery?.courierId ?? null;
-  if (!courierId) {
-    const item = order.items[0];
-    const kopdesId =
-      item?.product?.kopdesId ?? item?.umkmProduct?.umkm.kopdesId ?? null;
-    if (kopdesId) {
-      const couriers = await tx.user.findMany({
-        where: { role: Role.COURIER, kopdesId },
-        select: {
-          id: true,
-          _count: {
-            select: { deliveries: { where: { status: { in: ACTIVE } } } },
-          },
-        },
-      });
-      couriers.sort(
-        (a, b) =>
-          a._count.deliveries - b._count.deliveries || a.id.localeCompare(b.id),
-      );
-      courierId = couriers[0]?.id ?? null;
-    }
-  }
-
   await tx.delivery.upsert({
     where: { orderId },
-    create: { orderId, courierId, status: DeliveryStatus.ASSIGNED },
-    update: { courierId },
+    create: { orderId, status: DeliveryStatus.ASSIGNED },
+    // Tugas yang sudah dipegang kurir tidak dilepas hanya karena statusnya
+    // disentuh ulang.
+    update: {},
   });
 
-  const status = courierId
-    ? OrderStatus.OUT_FOR_DELIVERY
-    : OrderStatus.READY_FOR_DELIVERY;
-  await tx.order.update({ where: { id: orderId }, data: { status } });
-  return status;
+  // "Siap diambil kurir" — itu juga yang dibaca pemesan. Pesanan baru
+  // berangkat (OUT_FOR_DELIVERY) setelah kurir menandai barang diambil.
+  await tx.order.update({
+    where: { id: orderId },
+    data: { status: OrderStatus.READY_FOR_DELIVERY },
+  });
+  return OrderStatus.READY_FOR_DELIVERY;
 }
