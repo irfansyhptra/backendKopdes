@@ -98,8 +98,11 @@ const TASK_INCLUDE = {
 
 type TaskRow = Prisma.DeliveryGetPayload<{ include: typeof TASK_INCLUDE }>;
 
-/** Satu tempat yang harus disinggahi kurir sebelum mengantar. */
-interface Pickup {
+/// Satu tempat yang harus disinggahi kurir sebelum mengantar.
+///
+/// Diekspor karena ikut muncul di tipe balik controller; build produksi
+/// memancarkan berkas deklarasi dan menolak tipe publik yang tak bernama.
+export interface Pickup {
   id: string;
   kind: 'KOPDES' | 'UMKM';
   name: string;
