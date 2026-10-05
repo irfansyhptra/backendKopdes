@@ -8,6 +8,12 @@ const SANDBOX = {
   MIDTRANS_IS_PRODUCTION: 'false',
 };
 
+const PRODUCTION = {
+  MIDTRANS_SERVER_KEY: 'Mid-server-rahasia',
+  MIDTRANS_CLIENT_KEY: 'Mid-client-publik',
+  MIDTRANS_IS_PRODUCTION: 'true',
+};
+
 function build(config: Record<string, string> = SANDBOX) {
   return new MidtransService({ get: (key: string) => config[key] } as never);
 }
@@ -17,12 +23,46 @@ afterEach(() => {
   delete global.fetch;
 });
 
-describe('Midtrans Snap Sandbox', () => {
-  it('selalu menyediakan skrip sandbox meskipun flag produksi aktif', () => {
-    const service = build({ ...SANDBOX, MIDTRANS_IS_PRODUCTION: 'true' });
-    expect(service.snapJsUrl).toBe(MidtransService.SNAP_JS_URL);
-    expect(service.snapJsUrl).toContain('app.sandbox.midtrans.com');
+describe('Midtrans Snap', () => {
+  it('mode sandbox memakai alamat sandbox', () => {
+    const service = build();
+    expect(service.isProduction).toBe(false);
+    expect(service.snapJsUrl).toBe(MidtransService.SNAP_JS_SANDBOX);
+    expect(service.snapApiUrl).toBe(MidtransService.SNAP_API_SANDBOX);
     expect(service.publicClientKey).toBe(SANDBOX.MIDTRANS_CLIENT_KEY);
+  });
+
+  it('mode produksi memakai alamat produksi, bukan sandbox', () => {
+    const service = build(PRODUCTION);
+    expect(service.isProduction).toBe(true);
+    expect(service.snapJsUrl).toBe(MidtransService.SNAP_JS_PRODUCTION);
+    expect(service.snapApiUrl).toBe(MidtransService.SNAP_API_PRODUCTION);
+    expect(service.snapApiUrl).not.toContain('sandbox');
+  });
+
+  // Inilah yang membuat pembeli hanya melihat "server sedang bermasalah":
+  // kunci produksi dikirim ke endpoint sandbox, Midtrans menjawab 401, dan
+  // tidak ada satu pun pesan yang menyebut sebabnya.
+  it('kunci produksi pada mode sandbox ditolak dengan sebab yang jelas', async () => {
+    const service = build({ ...PRODUCTION, MIDTRANS_IS_PRODUCTION: 'false' });
+    const fetchMock = jest.fn();
+    global.fetch = fetchMock as never;
+
+    await expect(service.createSnapTransaction({})).rejects.toThrow(
+      /kunci Midtrans yang terpasang adalah kunci Produksi/i,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('kunci sandbox pada mode produksi ditolak dengan sebab yang jelas', async () => {
+    const service = build({ ...SANDBOX, MIDTRANS_IS_PRODUCTION: 'true' });
+    const fetchMock = jest.fn();
+    global.fetch = fetchMock as never;
+
+    await expect(service.createSnapTransaction({})).rejects.toThrow(
+      /kunci Midtrans yang terpasang adalah kunci Sandbox/i,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('membuat token lewat endpoint Snap sandbox dan Basic auth', async () => {
@@ -45,7 +85,7 @@ describe('Midtrans Snap Sandbox', () => {
     );
 
     const [url, init] = fetchMock.mock.calls[0];
-    expect(String(url)).toBe(MidtransService.SNAP_API_URL);
+    expect(String(url)).toBe(MidtransService.SNAP_API_SANDBOX);
     expect(String(url)).not.toContain('/v2/charge');
     expect((init.headers as Record<string, string>).Authorization).toMatch(
       /^Basic /,

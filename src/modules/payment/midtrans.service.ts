@@ -11,7 +11,12 @@ import type {
 } from './midtrans.types';
 
 /**
- * Klien Midtrans Snap dalam mode Sandbox.
+ * Klien Midtrans Snap.
+ *
+ * Modenya mengikuti `MIDTRANS_IS_PRODUCTION`. Sebelumnya nilai itu dibaca
+ * lalu diabaikan — integrasinya dikunci ke Sandbox. Akibatnya kunci produksi
+ * yang terpasang dikirim ke endpoint Sandbox, Midtrans menolaknya, dan
+ * pembeli hanya melihat "server sedang bermasalah" tanpa petunjuk apa pun.
  *
  * Server Key hanya ada di sini. Ia tidak pernah dikirim ke klien, tidak
  * pernah masuk respons, dan tidak pernah dicetak ke log.
@@ -22,45 +27,72 @@ export class MidtransService {
 
   private readonly serverKey?: string;
   private readonly clientKey?: string;
+  private readonly production: boolean;
 
-  static readonly SNAP_API_URL =
+  static readonly SNAP_API_SANDBOX =
     'https://app.sandbox.midtrans.com/snap/v1/transactions';
-  static readonly SNAP_JS_URL = 'https://app.sandbox.midtrans.com/snap/snap.js';
+  static readonly SNAP_API_PRODUCTION =
+    'https://app.midtrans.com/snap/v1/transactions';
+  static readonly SNAP_JS_SANDBOX =
+    'https://app.sandbox.midtrans.com/snap/snap.js';
+  static readonly SNAP_JS_PRODUCTION =
+    'https://app.midtrans.com/snap/snap.js';
 
   constructor(private readonly config: ConfigService) {
     this.serverKey = this.config.get<string>('MIDTRANS_SERVER_KEY');
     this.clientKey = this.config.get<string>('MIDTRANS_CLIENT_KEY');
+    this.production =
+      this.config.get<string>('MIDTRANS_IS_PRODUCTION') === 'true';
 
     if (!this.serverKey || !this.clientKey) {
       this.logger.warn(
-        'Kunci Midtrans Sandbox belum lengkap — pembayaran online akan ditolak.',
+        'Kunci Midtrans belum lengkap — pembayaran online akan ditolak.',
       );
-    }
-    if (this.config.get<string>('MIDTRANS_IS_PRODUCTION') === 'true') {
-      this.logger.warn(
-        'MIDTRANS_IS_PRODUCTION diabaikan: integrasi Snap masih dikunci ke Sandbox.',
+    } else if (this.keyModeMismatch()) {
+      this.logger.error(
+        `Kunci Midtrans tidak cocok dengan mode ${this.modeLabel()}. ` +
+          'Pembayaran online akan ditolak sampai keduanya disamakan.',
       );
     }
   }
 
-  /** Kunci Sandbox Midtrans **biasanya** berawalan `SB-`. */
-  private hasSandboxPrefix(): boolean {
-    return (this.serverKey ?? '').startsWith('SB-');
+  get isProduction(): boolean {
+    return this.production;
+  }
+
+  private modeLabel(): string {
+    return this.production ? 'Produksi' : 'Sandbox';
   }
 
   /**
-   * Apakah awalan kuncinya tidak seperti biasanya untuk lingkungan ini.
+   * Apakah awalan kunci bertentangan dengan mode yang dipilih.
    *
-   * Hanya untuk peringatan. Tidak dipakai menolak permintaan — lihat alasan
-   * di konstruktor.
+   * Kunci Sandbox Midtrans berawalan `SB-`; kunci produksi tidak. Memakai
+   * kunci produksi pada endpoint Sandbox (atau sebaliknya) hanya dijawab
+   * 401 oleh Midtrans — pesan yang tidak memberi tahu apa pun kepada yang
+   * memasangnya. Di sini ketidakcocokannya disebut terang-terangan.
    */
-  suspiciousKeyPrefix(): boolean {
+  private keyModeMismatch(): boolean {
     if (!this.serverKey) return false;
-    return !this.hasSandboxPrefix();
+    const sandboxKey = this.serverKey.startsWith('SB-');
+    return this.production ? sandboxKey : !sandboxKey;
+  }
+
+  /** Hanya untuk peringatan; penolakannya terjadi di `assertConfigured`. */
+  suspiciousKeyPrefix(): boolean {
+    return this.keyModeMismatch();
+  }
+
+  get snapApiUrl(): string {
+    return this.production
+      ? MidtransService.SNAP_API_PRODUCTION
+      : MidtransService.SNAP_API_SANDBOX;
   }
 
   get snapJsUrl(): string {
-    return MidtransService.SNAP_JS_URL;
+    return this.production
+      ? MidtransService.SNAP_JS_PRODUCTION
+      : MidtransService.SNAP_JS_SANDBOX;
   }
 
   get publicClientKey(): string {
@@ -78,6 +110,15 @@ export class MidtransService {
         'Pembayaran online belum dikonfigurasi. Hubungi pengurus koperasi.',
       );
     }
+    // Ditolak di sini, bukan dibiarkan jadi 401 dari Midtrans: yang membaca
+    // pesan ini adalah orang yang bisa memperbaikinya.
+    if (this.keyModeMismatch()) {
+      throw new ServiceUnavailableException(
+        this.production
+          ? 'Mode pembayaran Produksi aktif, tetapi kunci Midtrans yang terpasang adalah kunci Sandbox. Pasang kunci Produksi, atau setel MIDTRANS_IS_PRODUCTION=false.'
+          : 'Mode pembayaran Sandbox aktif, tetapi kunci Midtrans yang terpasang adalah kunci Produksi. Setel MIDTRANS_IS_PRODUCTION=true, atau pasang kunci Sandbox yang berawalan SB-.',
+      );
+    }
   }
 
   /** Basic auth Midtrans: server key sebagai username, sandi kosong. */
@@ -92,7 +133,7 @@ export class MidtransService {
 
     let res: Response;
     try {
-      res = await fetch(MidtransService.SNAP_API_URL, {
+      res = await fetch(this.snapApiUrl, {
         method: 'POST',
         body: JSON.stringify(payload),
         headers: {
@@ -106,7 +147,9 @@ export class MidtransService {
       });
     } catch (err) {
       const reason = err instanceof Error ? err.name : 'unknown';
-      this.logger.error(`Midtrans Snap tidak terjangkau (${reason})`);
+      this.logger.error(
+        `Midtrans Snap ${this.modeLabel()} tidak terjangkau (${reason})`,
+      );
       throw new ServiceUnavailableException(
         'Layanan pembayaran sedang tidak bisa dihubungi. Coba lagi beberapa saat lagi.',
       );
@@ -133,8 +176,9 @@ export class MidtransService {
   }
 
   /**
-   * Membuat token Snap Sandbox. Pemilihan kanal pembayaran berlangsung di
-   * popup resmi Midtrans sehingga backend tidak lagi memanggil Core Charge.
+   * Membuat token Snap. Pemilihan kanal pembayaran — QRIS, transfer bank,
+   * dompet digital, kartu — berlangsung di popup resmi Midtrans, sehingga
+   * backend tidak lagi memanggil Core Charge per kanal.
    */
   createSnapTransaction(
     payload: Record<string, unknown>,
