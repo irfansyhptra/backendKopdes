@@ -154,4 +154,63 @@ describe('KopdesConsoleService', () => {
       pendingPayouts: 2,
     });
   });
+
+  describe('uang masuk dari mitra', () => {
+    const row = (over = {}) => ({
+      id: 'oi1',
+      quantity: 2,
+      price: { toString: () => '50000' },
+      variantName: null,
+      createdAt: new Date('2026-10-05T02:00:00Z'),
+      umkmProduct: {
+        name: 'Keripik Pisang',
+        umkm: { id: 'u1', businessName: 'Dapur Bu Sri' },
+      },
+      ...over,
+    });
+
+    beforeEach(() => {
+      prisma.orderItem = {
+        findMany: jest.fn(async () => [row()]),
+        count: jest.fn(async () => 1),
+        aggregate: jest.fn(async () => ({ _sum: { quantity: 2 } })),
+      };
+    });
+
+    it('hanya pesanan SELESAI milik mitra Kopdes ini, bukan yang berjalan', async () => {
+      await service.mitraIncome(admin, {});
+
+      const where = prisma.orderItem.findMany.mock.calls[0][0].where;
+      expect(where.umkmProduct).toEqual({ umkm: { kopdesId: 'k1' } });
+      expect(where.order.status).toBe('COMPLETED');
+      expect(where.order.paymentStatus).toEqual({ not: 'REFUNDED' });
+    });
+
+    it('fee 5% dihitung dari harga kali jumlah', async () => {
+      const res = await service.mitraIncome(admin, {});
+
+      expect(res.entries[0]).toMatchObject({
+        umkmName: 'Dapur Bu Sri',
+        productName: 'Keripik Pisang',
+        quantity: 2,
+        gross: 100000,
+        fee: 5000,
+      });
+      expect(res.summary.feePercent).toBe(5);
+    });
+
+    // Inilah batas yang dijaga: pengurus melihat uangnya, bukan pesanannya.
+    it('tidak membocorkan pembeli, alamat, atau nomor pesanan', async () => {
+      const res = await service.mitraIncome(admin, {});
+
+      const select = prisma.orderItem.findMany.mock.calls[0][0].select;
+      expect(select.order).toBeUndefined();
+      expect(select.orderId).toBeUndefined();
+
+      const keys = Object.keys(res.entries[0]);
+      for (const bocor of ['customer', 'customerName', 'address', 'orderId']) {
+        expect(keys).not.toContain(bocor);
+      }
+    });
+  });
 });

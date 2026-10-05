@@ -182,7 +182,7 @@ describe('OrderService — authorization', () => {
       expect(prisma.$transaction).toHaveBeenCalled();
     });
 
-    it('COD diantar: "Proses" menaruhnya di kumpulan tugas kurir', async () => {
+    it('COD: "Proses" berhenti di Diproses, belum menunggu kurir', async () => {
       prisma.order.findUnique.mockResolvedValue(order({ status: 'PENDING' }));
       prisma.order.findFirst.mockResolvedValue({ id: 'order-1' });
 
@@ -190,6 +190,25 @@ describe('OrderService — authorization', () => {
         'admin-1',
         'order-1',
         'PROCESSING' as any,
+        'ADMIN_KOPDES',
+        'kop-1',
+      );
+
+      // Barangnya belum dibungkus; kurir tidak boleh dipanggil dulu.
+      expect(tx.delivery.upsert).not.toHaveBeenCalled();
+      expect(res.status).toBe('PROCESSING');
+    });
+
+    it('"Siap Dikirim" barulah menaruhnya di kumpulan tugas kurir', async () => {
+      prisma.order.findUnique.mockResolvedValue(
+        order({ status: 'PROCESSING' }),
+      );
+      prisma.order.findFirst.mockResolvedValue({ id: 'order-1' });
+
+      const res = await service.updateStatus(
+        'admin-1',
+        'order-1',
+        'READY_FOR_DELIVERY' as any,
         'ADMIN_KOPDES',
         'kop-1',
       );
@@ -240,6 +259,20 @@ describe('OrderService — authorization', () => {
 
       expect(tx.delivery.upsert).not.toHaveBeenCalled();
       expect(res.status).toBe('PROCESSING');
+    });
+  });
+
+  describe('lingkup pesanan Kopdes', () => {
+    it('hanya barang Kopdes sendiri; pesanan mitra UMKM tidak termasuk', () => {
+      const scope = OrderService.kopdesScope('kop-1');
+      expect(scope).toEqual({
+        items: { some: { product: { kopdesId: 'kop-1' } } },
+      });
+      expect(JSON.stringify(scope)).not.toContain('umkmProduct');
+    });
+
+    it('Super Admin tanpa Kopdes tidak disaring', () => {
+      expect(OrderService.kopdesScope(null)).toEqual({});
     });
   });
 

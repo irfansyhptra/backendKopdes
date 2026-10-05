@@ -19,8 +19,10 @@ import {
   isOpenNow,
   normalizeOperatingHours,
 } from '../koperasi/opening-hours.util';
+import { splitFee, PAYOUT_RULES } from '../payout/payout.rules';
 import {
   KopdesProductQueryDto,
+  MitraIncomeQueryDto,
   UpdateKopdesProfileDto,
 } from './dto/kopdes-console.dto';
 
@@ -293,6 +295,133 @@ export class KopdesConsoleService {
       newOrdersCount,
       pendingMitra,
       pendingPayouts,
+    };
+  }
+
+  // ── Uang masuk dari mitra ────────────────────────────────────
+
+  /**
+   * Catatan uang masuk dari barang mitra UMKM yang laku.
+   *
+   * Inilah satu-satunya jendela pengurus ke penjualan mitra. Pesanannya
+   * sendiri bukan urusan koperasi — siapa pembelinya, ke mana diantar, dan
+   * apa lagi isinya tidak ikut dikirim di sini, dan pesanan mitra memang
+   * tidak muncul di daftar pesanan pengurus (`OrderService.kopdesScope`).
+   *
+   * Yang dicatat hanya pesanan SELESAI: fee baru menjadi hak koperasi
+   * setelah pembeli menerima barangnya. Pesanan yang masih berjalan, batal,
+   * atau dikembalikan tidak ikut.
+   */
+  async mitraIncome(user: AuthenticatedUser, q: MitraIncomeQueryDto) {
+    const kopdesId = this.kopdesOf(user);
+    const page = Math.max(q.page ?? 1, 1);
+    const limit = Math.min(Math.max(q.limit ?? 20, 1), 100);
+
+    const where: Prisma.OrderItemWhereInput = {
+      umkmProduct: { umkm: { kopdesId } },
+      order: {
+        status: OrderStatus.COMPLETED,
+        paymentStatus: { not: 'REFUNDED' },
+      },
+    };
+
+    const [rows, total, all] = await Promise.all([
+      this.prisma.orderItem.findMany({
+        where,
+        select: {
+          id: true,
+          quantity: true,
+          price: true,
+          variantName: true,
+          createdAt: true,
+          umkmProduct: {
+            select: {
+              name: true,
+              umkm: { select: { id: true, businessName: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.orderItem.count({ where }),
+      // Jumlah seluruhnya dihitung di database, bukan dari halaman yang
+      // sedang dibuka — total yang berubah saat orang membalik halaman
+      // bukan total.
+      this.prisma.orderItem.aggregate({ where, _sum: { quantity: true } }),
+    ]);
+
+    const entries = rows.map((r) => {
+      const gross = Number(r.price) * r.quantity;
+      const { fee } = splitFee(gross);
+      return {
+        id: r.id,
+        soldAt: r.createdAt,
+        umkmId: r.umkmProduct?.umkm.id ?? '',
+        umkmName: r.umkmProduct?.umkm.businessName ?? 'Mitra UMKM',
+        productName: r.umkmProduct?.name ?? 'Barang mitra',
+        variantName: r.variantName,
+        quantity: r.quantity,
+        gross,
+        fee,
+      };
+    });
+
+    const totals = await this.mitraIncomeTotals(kopdesId);
+
+    return {
+      entries,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+      summary: {
+        feePercent: PAYOUT_RULES.feePercent,
+        itemsSold: all._sum.quantity ?? 0,
+        ...totals,
+      },
+    };
+  }
+
+  /** Fee bulan berjalan dan sepanjang waktu, dalam WIB. */
+  private async mitraIncomeTotals(kopdesId: string, now = new Date()) {
+    const wib = 7 * 3600_000;
+    const local = new Date(now.getTime() + wib);
+    const monthStart = new Date(
+      Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), 1) - wib,
+    );
+
+    const base: Prisma.OrderItemWhereInput = {
+      umkmProduct: { umkm: { kopdesId } },
+      order: {
+        status: OrderStatus.COMPLETED,
+        paymentStatus: { not: 'REFUNDED' },
+      },
+    };
+
+    const sumGross = async (where: Prisma.OrderItemWhereInput) => {
+      // `price * quantity` tidak bisa dijumlahkan Prisma dalam satu agregat,
+      // jadi barisnya diambil lalu dijumlahkan di sini.
+      const rows = await this.prisma.orderItem.findMany({
+        where,
+        select: { price: true, quantity: true },
+      });
+      return rows.reduce((sum, r) => sum + Number(r.price) * r.quantity, 0);
+    };
+
+    const [grossAll, grossMonth] = await Promise.all([
+      sumGross(base),
+      sumGross({ ...base, createdAt: { gte: monthStart } }),
+    ]);
+
+    return {
+      grossAllTime: grossAll,
+      feeAllTime: splitFee(grossAll).fee,
+      grossThisMonth: grossMonth,
+      feeThisMonth: splitFee(grossMonth).fee,
     };
   }
 

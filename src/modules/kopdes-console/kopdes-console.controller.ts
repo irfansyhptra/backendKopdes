@@ -21,6 +21,7 @@ import { Permission } from '../../common/permissions';
 import type { AuthenticatedRequest } from '../auth/authenticated-request';
 import {
   KopdesProductQueryDto,
+  MitraIncomeQueryDto,
   UpdateKopdesProfileDto,
 } from './dto/kopdes-console.dto';
 import { KopdesConsoleService } from './kopdes-console.service';
@@ -74,6 +75,24 @@ export class KopdesConsoleController {
   @Get('dashboard')
   async dashboard(@Req() req: AuthenticatedRequest) {
     return { success: true, data: await this.console.dashboard(req.user) };
+  }
+
+  /**
+   * Uang masuk dari penjualan mitra — bukan pesanannya.
+   *
+   * Dijaga izin rekap keuangan, bukan izin pesanan: yang dibuka di sini
+   * angka, bukan isi pesanan orang.
+   */
+  @Get('mitra-income')
+  @RequirePermissions(Permission.FINANCE_READ_SUMMARY)
+  async mitraIncome(
+    @Req() req: AuthenticatedRequest,
+    @Query() query: MitraIncomeQueryDto,
+  ) {
+    return {
+      success: true,
+      data: await this.console.mitraIncome(req.user, query),
+    };
   }
 
   @Get('products')

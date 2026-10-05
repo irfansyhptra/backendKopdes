@@ -53,21 +53,14 @@ export class StaffService {
    * Filter pesanan milik satu Kopdes.
    *
    * `Order` tidak menyimpan `kopdesId` sendiri, jadi kepemilikan ditelusuri
-   * lewat barisnya: produk Kopdes langsung, atau produk mitra yang bernaung
-   * di Kopdes itu. Keduanya diindeks pada kolom `kopdesId`.
+   * lewat barisnya — dan hanya lewat barang Kopdes sendiri.
    */
   private orderScope(kopdesId: string | null): Prisma.OrderWhereInput {
     if (!kopdesId) return {};
-    return {
-      items: {
-        some: {
-          OR: [
-            { product: { kopdesId } },
-            { umkmProduct: { umkm: { kopdesId } } },
-          ],
-        },
-      },
-    };
+    // Barang Kopdes sendiri saja — lihat alasannya di
+    // `OrderService.kopdesScope`. Omzet mitra bukan omzet koperasi; yang
+    // menjadi pendapatan koperasi dari penjualan mitra hanyalah fee-nya.
+    return { items: { some: { product: { kopdesId } } } };
   }
 
   private productScope(kopdesId: string | null): Prisma.ProductWhereInput {

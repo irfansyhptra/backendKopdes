@@ -659,24 +659,21 @@ export class OrderService {
 
   // Admin Kopdes: seluruh pesanan koperasi, opsional difilter status.
   /**
-   * Filter kepemilikan Kopdes untuk sebuah pesanan.
+   * Pesanan yang boleh DIKELOLA pengurus Kopdes: yang memuat barang milik
+   * Kopdes sendiri.
    *
-   * `Order` tidak menyimpan kopdesId sendiri, jadi ditelusuri lewat barisnya:
-   * produk Kopdes langsung, atau produk mitra yang bernaung di Kopdes itu.
+   * Pesanan atas barang mitra UMKM sengaja TIDAK termasuk. Yang dijual
+   * mitra adalah barang mitra, dan isi pesanannya — siapa pembelinya, ke
+   * mana diantar, apa saja isinya — bukan urusan pengurus. Yang menjadi
+   * hak Kopdes dari penjualan itu hanyalah fee-nya, dan itu dibaca sebagai
+   * catatan uang masuk (`KopdesConsoleService.mitraIncome`), bukan sebagai
+   * pesanan yang bisa dibuka dan diubah statusnya.
+   *
    * `null` (Super Admin) berarti tanpa penyaringan.
    */
   static kopdesScope(kopdesId: string | null): Prisma.OrderWhereInput {
     if (!kopdesId) return {};
-    return {
-      items: {
-        some: {
-          OR: [
-            { product: { kopdesId } },
-            { umkmProduct: { umkm: { kopdesId } } },
-          ],
-        },
-      },
-    };
+    return { items: { some: { product: { kopdesId } } } };
   }
 
   async listAllForAdmin(
@@ -1004,15 +1001,16 @@ export class OrderService {
         }
       }
 
-      // Penyerahan ke kumpulan tugas kurir. COD yang diantar tidak menunggu
-      // pembayaran apa pun, jadi "Proses" sudah cukup untuk menawarkannya ke
-      // kurir — pengurus tidak perlu menandai "Siap Dikirim" lebih dulu.
-      // Pesanan lain masuk kumpulan saat ditandai siap dikirim.
-      const handOver =
-        status === OrderStatus.READY_FOR_DELIVERY ||
-        (status === OrderStatus.PROCESSING &&
-          order.paymentMethod === PaymentMethod.COD);
-      if (handOver) {
+      // Penyerahan ke kumpulan tugas kurir terjadi saat barang ditandai
+      // siap dikirim — bukan saat pesanan mulai disiapkan.
+      //
+      // Sebelumnya COD melompati langkah "Diproses": satu ketukan membuat
+      // pesanan langsung menunggu kurir. Itu menghapus tahap yang justru
+      // dikerjakan di dunia nyata — barang diambil dari rak, ditimbang,
+      // dibungkus — dan membuat kurir berangkat ke toko yang pesanannya
+      // belum jadi. Sekarang COD mengikuti urutan yang sama dengan yang
+      // lain: disiapkan dulu, baru diserahkan.
+      if (status === OrderStatus.READY_FOR_DELIVERY) {
         const next = await handOverToCourier(tx, orderId);
         if (next) {
           updated.status = next;
