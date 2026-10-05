@@ -40,11 +40,7 @@ export class PaymentController {
     @Req() req: AuthenticatedRequest,
     @Body() dto: CreatePaymentDto,
   ) {
-    const data = await this.payments.create(
-      req.user.id,
-      dto.orderId,
-      dto.paymentMethod,
-    );
+    const data = await this.payments.create(req.user.id, dto.orderId);
     return { success: true, data };
   }
 
@@ -60,11 +56,7 @@ export class PaymentController {
   }
 
   /**
-   * Menanyakan status langsung ke Midtrans.
-   *
-   * Jaring pengaman bila webhook tidak sampai, dan yang dipanggil halaman
-   * instruksi saat pengguna menekan "Cek Status". Dibatasi karena halaman itu
-   * juga memanggilnya berkala.
+   * Membaca status database yang terakhir disahkan webhook Midtrans.
    */
   @Post(':orderId/check-status')
   @HttpCode(HttpStatus.OK)

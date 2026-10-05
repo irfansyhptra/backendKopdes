@@ -6,15 +6,12 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type {
-  MidtransChargeResponse,
   MidtransNotification,
+  MidtransSnapResponse,
 } from './midtrans.types';
 
 /**
- * Klien Midtrans Core API.
- *
- * Core API, bukan Snap: seluruh halaman pembayaran memakai tampilan aplikasi
- * sendiri, dan Snap memaksa halaman miliknya.
+ * Klien Midtrans Snap dalam mode Sandbox.
  *
  * Server Key hanya ada di sini. Ia tidak pernah dikirim ke klien, tidak
  * pernah masuk respons, dan tidak pernah dicetak ke log.
@@ -24,33 +21,24 @@ export class MidtransService {
   private readonly logger = new Logger(MidtransService.name);
 
   private readonly serverKey?: string;
-  private readonly isProduction: boolean;
+  private readonly clientKey?: string;
 
-  static readonly SANDBOX_URL = 'https://api.sandbox.midtrans.com';
-  static readonly PRODUCTION_URL = 'https://api.midtrans.com';
+  static readonly SNAP_API_URL =
+    'https://app.sandbox.midtrans.com/snap/v1/transactions';
+  static readonly SNAP_JS_URL = 'https://app.sandbox.midtrans.com/snap/snap.js';
 
   constructor(private readonly config: ConfigService) {
     this.serverKey = this.config.get<string>('MIDTRANS_SERVER_KEY');
-    this.isProduction =
-      this.config.get<string>('MIDTRANS_IS_PRODUCTION') === 'true';
+    this.clientKey = this.config.get<string>('MIDTRANS_CLIENT_KEY');
 
-    if (!this.serverKey) {
+    if (!this.serverKey || !this.clientKey) {
       this.logger.warn(
-        'MIDTRANS_SERVER_KEY belum diisi — pembayaran online akan ditolak.',
+        'Kunci Midtrans Sandbox belum lengkap — pembayaran online akan ditolak.',
       );
-    } else if (this.suspiciousKeyPrefix()) {
-      // Peringatan, bukan penolakan.
-      //
-      // Awalan `SB-` adalah kebiasaan Midtrans, bukan aturan: sebagian akun
-      // punya kunci Sandbox yang sah tanpa awalan itu. Menolaknya berarti
-      // mematikan pembayaran yang sebenarnya berfungsi — dan salah
-      // lingkungan pun tidak menghanguskan uang, ia hanya dijawab 401 oleh
-      // Midtrans. Jadi yang berhak memutuskan adalah jawaban API-nya.
+    }
+    if (this.config.get<string>('MIDTRANS_IS_PRODUCTION') === 'true') {
       this.logger.warn(
-        `Awalan kunci Midtrans tidak seperti biasanya untuk ` +
-          `MIDTRANS_IS_PRODUCTION=${this.isProduction}. Pastikan kunci ini ` +
-          `memang milik lingkungan ${this.isProduction ? 'Produksi' : 'Sandbox'}; ` +
-          `permintaan akan dijawab 401 bila keliru.`,
+        'MIDTRANS_IS_PRODUCTION diabaikan: integrasi Snap masih dikunci ke Sandbox.',
       );
     }
   }
@@ -68,21 +56,24 @@ export class MidtransService {
    */
   suspiciousKeyPrefix(): boolean {
     if (!this.serverKey) return false;
-    return this.isProduction === this.hasSandboxPrefix();
+    return !this.hasSandboxPrefix();
   }
 
-  get baseUrl(): string {
-    return this.isProduction
-      ? MidtransService.PRODUCTION_URL
-      : MidtransService.SANDBOX_URL;
+  get snapJsUrl(): string {
+    return MidtransService.SNAP_JS_URL;
+  }
+
+  get publicClientKey(): string {
+    this.assertConfigured();
+    return this.clientKey!;
   }
 
   isConfigured(): boolean {
-    return Boolean(this.serverKey);
+    return Boolean(this.serverKey && this.clientKey);
   }
 
   private assertConfigured() {
-    if (!this.serverKey) {
+    if (!this.serverKey || !this.clientKey) {
       throw new ServiceUnavailableException(
         'Pembayaran online belum dikonfigurasi. Hubungi pengurus koperasi.',
       );
@@ -95,20 +86,19 @@ export class MidtransService {
   }
 
   private async request(
-    path: string,
-    init: RequestInit,
-  ): Promise<MidtransChargeResponse> {
+    payload: Record<string, unknown>,
+  ): Promise<MidtransSnapResponse> {
     this.assertConfigured();
 
     let res: Response;
     try {
-      res = await fetch(`${this.baseUrl}${path}`, {
-        ...init,
+      res = await fetch(MidtransService.SNAP_API_URL, {
+        method: 'POST',
+        body: JSON.stringify(payload),
         headers: {
           Accept: 'application/json',
           'Content-Type': 'application/json',
           Authorization: this.authHeader(),
-          ...(init.headers ?? {}),
         },
         // Midtrans biasanya menjawab di bawah 3 detik; menunggu tanpa batas
         // membuat permintaan pengguna menggantung sampai gateway menyerah.
@@ -116,7 +106,7 @@ export class MidtransService {
       });
     } catch (err) {
       const reason = err instanceof Error ? err.name : 'unknown';
-      this.logger.error(`Midtrans tidak terjangkau (${reason}) pada ${path}`);
+      this.logger.error(`Midtrans Snap tidak terjangkau (${reason})`);
       throw new ServiceUnavailableException(
         'Layanan pembayaran sedang tidak bisa dihubungi. Coba lagi beberapa saat lagi.',
       );
@@ -124,7 +114,7 @@ export class MidtransService {
 
     const body = (await res
       .json()
-      .catch(() => null)) as MidtransChargeResponse | null;
+      .catch(() => null)) as MidtransSnapResponse | null;
 
     if (!body) {
       throw new ServiceUnavailableException(
@@ -132,27 +122,24 @@ export class MidtransService {
       );
     }
 
+    if (!res.ok || !body.token || !body.redirect_url) {
+      const reason = body.error_messages?.join(', ');
+      throw new ServiceUnavailableException(
+        reason || 'Midtrans Snap gagal membuat sesi pembayaran.',
+      );
+    }
+
     return body;
   }
 
   /**
-   * `POST /v2/charge` — membuat transaksi.
-   *
-   * Nominalnya sudah dihitung backend dari database; apa pun yang dikirim
-   * klien tidak pernah sampai ke sini.
+   * Membuat token Snap Sandbox. Pemilihan kanal pembayaran berlangsung di
+   * popup resmi Midtrans sehingga backend tidak lagi memanggil Core Charge.
    */
-  charge(payload: Record<string, unknown>): Promise<MidtransChargeResponse> {
-    return this.request('/v2/charge', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-  }
-
-  /** `GET /v2/{order_id}/status` — status terkini menurut Midtrans. */
-  status(midtransOrderId: string): Promise<MidtransChargeResponse> {
-    return this.request(`/v2/${encodeURIComponent(midtransOrderId)}/status`, {
-      method: 'GET',
-    });
+  createSnapTransaction(
+    payload: Record<string, unknown>,
+  ): Promise<MidtransSnapResponse> {
+    return this.request(payload);
   }
 
   /**

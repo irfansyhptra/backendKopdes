@@ -31,6 +31,42 @@
 $ npm install
 ```
 
+## Verifikasi email pelanggan
+
+Pendaftaran mandiri membuat kode OTP enam angka dan mengirimkannya melalui
+SMTP. Konfigurasikan variabel berikut pada lingkungan backend:
+
+```dotenv
+SMTP_HOST=smtp.example.com
+SMTP_PORT=465
+SMTP_USER=no-reply@example.com
+SMTP_PASS=your-smtp-password
+SMTP_FROM=no-reply@example.com
+OTP_SECRET=use-a-long-random-secret
+```
+
+`SMTP_FROM` boleh dikosongkan dan akan memakai `SMTP_USER`. `OTP_SECRET`
+sebaiknya berbeda dari `JWT_SECRET`; jika kosong, backend memakai turunan
+`JWT_SECRET`. Terapkan migrasi Prisma sebelum menjalankan versi ini.
+
+## Midtrans Snap Sandbox
+
+Pembayaran online memakai Snap dan dikunci ke lingkungan sandbox. Siapkan
+kunci sandbox pada backend; Server Key tidak pernah dikirim ke aplikasi atau
+website.
+
+```dotenv
+MIDTRANS_SERVER_KEY=SB-Mid-server-...
+MIDTRANS_CLIENT_KEY=SB-Mid-client-...
+MIDTRANS_IS_PRODUCTION=false
+MIDTRANS_EXPIRY_MINUTES=15
+```
+
+Atur Payment Notification URL di dashboard Midtrans ke endpoint publik
+`POST /api/v1/payments/midtrans/webhook`. Status pembayaran dan pesanan hanya
+berubah melalui webhook bertanda tangan tersebut. Terapkan migrasi Prisma
+`20261005000000_midtrans_snap` sebelum mengaktifkan checkout.
+
 ## Compile and run the project
 
 ```bash

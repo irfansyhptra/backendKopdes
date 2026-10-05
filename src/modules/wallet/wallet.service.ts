@@ -381,6 +381,8 @@ export class WalletService {
       transactionId?: string;
       transactionStatus?: string;
       fraudStatus?: string;
+      snapToken?: string;
+      snapRedirectUrl?: string;
       actions?: unknown;
       expiresAt?: Date | null;
     },
@@ -391,6 +393,8 @@ export class WalletService {
         transactionId: data.transactionId ?? null,
         transactionStatus: data.transactionStatus ?? null,
         fraudStatus: data.fraudStatus ?? null,
+        snapToken: data.snapToken ?? null,
+        snapRedirectUrl: data.snapRedirectUrl ?? null,
         actions: (data.actions ?? null) as Prisma.InputJsonValue,
         expiresAt: data.expiresAt ?? null,
       },
@@ -400,6 +404,8 @@ export class WalletService {
         status: true,
         paymentMethod: true,
         midtransOrderId: true,
+        snapToken: true,
+        snapRedirectUrl: true,
         actions: true,
         expiresAt: true,
         createdAt: true,
@@ -424,6 +430,8 @@ export class WalletService {
         amount: true,
         status: true,
         paymentMethod: true,
+        snapToken: true,
+        snapRedirectUrl: true,
         actions: true,
         expiresAt: true,
         paidAt: true,

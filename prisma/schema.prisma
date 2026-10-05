@@ -119,6 +119,8 @@ enum PaymentMethod {
   COD
   /// Dibayar dari saldo dompet KOMIT saat pesanan dibuat.
   WALLET
+  /// Pemilihan kanal pembayaran dilakukan di popup Midtrans Snap.
+  MIDTRANS
   QRIS
   GOPAY
   SHOPEEPAY
@@ -330,6 +332,24 @@ model RefreshToken {
   expiresAt DateTime
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+/// Pendaftaran pelanggan yang belum menyelesaikan verifikasi email.
+/// Kode OTP tidak pernah disimpan mentah; hanya HMAC-nya yang tinggal di DB.
+model CustomerEmailVerification {
+  id              String   @id @default(uuid())
+  email           String   @unique
+  passwordHash    String
+  name            String
+  phone           String?
+  codeHash        String
+  expiresAt       DateTime
+  resendAllowedAt DateTime
+  attempts        Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([expiresAt])
 }
 
 model Address {
@@ -562,6 +582,11 @@ model Payment {
   /// yang dipakai ulang, sementara pesanan yang kedaluwarsa boleh dibayar
   /// ulang dengan transaksi baru.
   midtransOrderId String? @unique
+
+  /// Sesi Snap yang dibuka klien. Token aman dipublikasikan ke pemilik
+  /// pesanan; Server Key tetap hanya berada di backend.
+  snapToken       String? @unique
+  snapRedirectUrl String?
 
   /// `payment_type` mentah dari Midtrans (qris, gopay, bank_transfer, …).
   /// Disimpan apa adanya supaya bentuk respons yang berbeda per metode tetap
@@ -1033,6 +1058,10 @@ model WalletTopUp {
   transactionId     String?
   transactionStatus String?
   fraudStatus       String?
+
+  /// Sesi Snap untuk melanjutkan isi ulang dari web atau aplikasi.
+  snapToken       String? @unique
+  snapRedirectUrl String?
 
   /// Jawaban mentah Midtrans: nomor VA, QR, atau tautan pembayaran.
   actions Json?

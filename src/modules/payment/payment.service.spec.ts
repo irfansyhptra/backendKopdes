@@ -1,22 +1,23 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { OrderStatus, PaymentStatus, Prisma } from '@prisma/client';
+import {
+  OrderStatus,
+  PaymentMethod,
+  PaymentStatus,
+  Prisma,
+} from '@prisma/client';
 import { PaymentService } from './payment.service';
 
-/**
- * Aturan uang.
- *
- * Yang diuji di sini bukan tampilan melainkan tiga janji: nominal selalu dari
- * database, hanya pemilik pesanan yang bisa membayarnya, dan hanya webhook
- * yang sah yang boleh menandai lunas.
- */
-
 const OWNER = 'user-1';
+const SNAP_OK = {
+  token: 'snap-token',
+  redirect_url: 'https://app.sandbox.midtrans.com/snap/v3/redirection/x',
+};
 
 function basePayment(over: Record<string, unknown> = {}) {
   return {
     id: 'pay-1',
     orderId: 'order-1',
-    method: 'QRIS',
+    method: PaymentMethod.MIDTRANS,
     status: PaymentStatus.PENDING,
     amount: new Prisma.Decimal(50000),
     midtransOrderId: null,
@@ -30,303 +31,266 @@ function basePayment(over: Record<string, unknown> = {}) {
     qrCodeUrl: null,
     deeplinkUrl: null,
     paidAt: null,
+    snapToken: null,
+    snapRedirectUrl: null,
     ...over,
   };
 }
 
-function build(over: Record<string, unknown> = {}) {
-  const payment = {
-    findUnique: jest.fn(),
-    update: jest.fn(),
+function order(payment = basePayment(), over: Record<string, unknown> = {}) {
+  return {
+    id: 'order-1',
+    customerId: OWNER,
+    status: OrderStatus.PENDING,
+    payment,
+    items: [
+      {
+        id: 'line-1',
+        productId: 'product-1',
+        umkmProductId: null,
+        quantity: 2,
+        price: new Prisma.Decimal(25000),
+        product: { name: 'Beras Premium' },
+        umkmProduct: null,
+      },
+    ],
+    ...over,
   };
+}
+
+function build() {
+  const payment = { findUnique: jest.fn(), update: jest.fn() };
+  const orderTx = { findUnique: jest.fn(), update: jest.fn() };
   const prisma = {
     order: { findUnique: jest.fn(), update: jest.fn() },
     payment,
+    product: { update: jest.fn() },
+    uMKMProduct: { update: jest.fn() },
+    inventoryTransaction: { create: jest.fn() },
     user: {
       findUnique: jest.fn().mockResolvedValue({
-        name: 'Budi', email: 'budi@desa.co', phone: '0812',
+        name: 'Budi',
+        email: 'budi@desa.co',
+        phone: '0812',
       }),
     },
     paymentWebhookEvent: { create: jest.fn().mockResolvedValue({}) },
-    $transaction: jest.fn(async (fn: never) =>
-      typeof fn === 'function'
-        ? (fn as unknown as (t: unknown) => unknown)({
-            payment,
-            order: { findUnique: jest.fn().mockResolvedValue({ status: OrderStatus.PENDING }), update: jest.fn() },
-          })
-        : undefined,
+    $transaction: jest.fn(async (fn: (tx: unknown) => unknown) =>
+      fn({
+        payment,
+        order: orderTx,
+        product: prisma.product,
+        uMKMProduct: prisma.uMKMProduct,
+        inventoryTransaction: prisma.inventoryTransaction,
+      }),
     ),
-    ...over,
   };
   const midtrans = {
-    charge: jest.fn(),
-    status: jest.fn(),
+    createSnapTransaction: jest.fn(),
     verifySignature: jest.fn().mockReturnValue(true),
+    publicClientKey: 'SB-Mid-client-publik',
+    snapJsUrl: 'https://app.sandbox.midtrans.com/snap/snap.js',
   };
   const cache = {
     delete: jest.fn().mockResolvedValue(undefined),
     deletePattern: jest.fn().mockResolvedValue(undefined),
   };
-  const svc = new PaymentService(
+  const service = new PaymentService(
     prisma as never,
     midtrans as never,
     cache as never,
-    { get: () => '3' } as never,
+    { get: () => undefined } as never,
   );
-  return { svc, prisma, midtrans, payment };
+  return { service, prisma, midtrans, payment, orderTx };
 }
 
-const CHARGE_OK = {
-  status_code: '201',
-  status_message: 'ok',
-  transaction_id: 'mt-1',
-  order_id: 'KOMIT-order1-1700000000',
-  gross_amount: '50000.00',
-  payment_type: 'qris',
-  transaction_status: 'pending',
-  actions: [{ name: 'generate-qr-code', method: 'GET', url: 'https://mt/q.png' }],
-};
+function ready(payment = basePayment()) {
+  const context = build();
+  context.prisma.order.findUnique.mockResolvedValue(order(payment));
+  context.midtrans.createSnapTransaction.mockResolvedValue(SNAP_OK);
+  context.payment.update.mockImplementation(async ({ data }: any) =>
+    basePayment({ ...data }),
+  );
+  return context;
+}
 
-describe('kepemilikan pesanan', () => {
-  it('pesanan milik orang lain dijawab tidak ditemukan', async () => {
-    const { svc, prisma } = build();
-    prisma.order.findUnique.mockResolvedValue({
-      id: 'order-1', customerId: 'orang-lain', payment: basePayment(),
-    });
-    // Membedakan "terlarang" dari "tidak ada" memberi tahu penebak bahwa
-    // id pesanannya benar.
-    await expect(svc.create(OWNER, 'order-1', 'QRIS')).rejects.toBeInstanceOf(
-      NotFoundException,
+describe('membuat sesi Snap', () => {
+  it('menyembunyikan pesanan yang bukan milik pengguna', async () => {
+    const context = build();
+    context.prisma.order.findUnique.mockResolvedValue(
+      order(basePayment(), { customerId: 'orang-lain' }),
     );
-    await expect(svc.get(OWNER, 'order-1')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(
+      context.service.create(OWNER, 'order-1'),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('pesanan yang tidak ada dijawab sama', async () => {
-    const { svc, prisma } = build();
-    prisma.order.findUnique.mockResolvedValue(null);
-    await expect(svc.create(OWNER, 'hantu', 'QRIS')).rejects.toBeInstanceOf(
-      NotFoundException,
-    );
-  });
-});
+  it('mengirim nominal database dan setiap produk ke Snap sandbox', async () => {
+    const context = ready();
+    const result = await context.service.create(OWNER, 'order-1');
+    const sent = context.midtrans.createSnapTransaction.mock.calls[0][0];
 
-describe('membuat transaksi', () => {
-  function ready(over: Record<string, unknown> = {}) {
-    const ctx = build();
-    ctx.prisma.order.findUnique.mockResolvedValue({
-      id: 'order-1',
-      customerId: OWNER,
-      status: OrderStatus.PENDING,
-      payment: basePayment(over),
-    });
-    ctx.midtrans.charge.mockResolvedValue(CHARGE_OK);
-    ctx.payment.update.mockImplementation(async ({ data }: never) =>
-      basePayment({ ...(data as object) }),
-    );
-    return ctx;
-  }
-
-  it('nominal diambil dari database, bukan dari klien', async () => {
-    const { svc, midtrans } = ready();
-    await svc.create(OWNER, 'order-1', 'QRIS');
-    const sent = midtrans.charge.mock.calls[0][0];
     expect(sent.transaction_details.gross_amount).toBe(50000);
-  });
-
-  it('order_id Midtrans berawalan KOMIT', async () => {
-    const { svc, midtrans } = ready();
-    await svc.create(OWNER, 'order-1', 'QRIS');
-    expect(midtrans.charge.mock.calls[0][0].transaction_details.order_id)
-      .toMatch(/^KOMIT-/);
-  });
-
-  it('menyertakan masa berlaku 3 menit', async () => {
-    const { svc, midtrans } = ready();
-    await svc.create(OWNER, 'order-1', 'QRIS');
-    const sent = midtrans.charge.mock.calls[0][0];
-    expect(sent.custom_expiry).toEqual({ expiry_duration: 3, unit: 'minute' });
-    // `order_time` sengaja tidak dikirim: formatnya menuntut zona waktu
-    // eksplisit, dan jam server yang meleset membuat Midtrans menolak
-    // seluruh transaksi.
-    expect(sent.custom_expiry).not.toHaveProperty('order_time');
-  });
-
-  it('QRIS dikirim sebagai payment_type qris', async () => {
-    const { svc, midtrans } = ready();
-    await svc.create(OWNER, 'order-1', 'QRIS');
-    expect(midtrans.charge.mock.calls[0][0].payment_type).toBe('qris');
-  });
-
-  it('VA BCA dikirim sebagai bank_transfer', async () => {
-    const { svc, midtrans } = ready();
-    await svc.create(OWNER, 'order-1', 'BCA_VA');
-    const sent = midtrans.charge.mock.calls[0][0];
-    expect(sent.payment_type).toBe('bank_transfer');
-    expect(sent.bank_transfer.bank).toBe('bca');
-  });
-
-  it('e-wallet GoPay dikirim sebagai gopay', async () => {
-    const { svc, midtrans } = ready();
-    await svc.create(OWNER, 'order-1', 'GOPAY');
-    expect(midtrans.charge.mock.calls[0][0].payment_type).toBe('gopay');
-  });
-
-  it('klik ganda memakai ulang transaksi yang masih hidup', async () => {
-    const { svc, midtrans } = ready({
-      midtransOrderId: 'KOMIT-lama-1',
-      method: 'QRIS',
-      status: PaymentStatus.PENDING,
-      expiryTime: new Date(Date.now() + 600_000),
-      qrCodeUrl: 'https://mt/lama.png',
-    });
-    const out = await svc.create(OWNER, 'order-1', 'QRIS');
-    // Tagihan kedua untuk pesanan yang sama adalah cara paling cepat
-    // membuat pelanggan membayar dua kali.
-    expect(midtrans.charge).not.toHaveBeenCalled();
-    expect(out.midtransOrderId).toBe('KOMIT-lama-1');
-  });
-
-  it('transaksi yang sudah kedaluwarsa dibuat ulang', async () => {
-    const { svc, midtrans } = ready({
-      midtransOrderId: 'KOMIT-lama-1',
-      expiryTime: new Date(Date.now() - 1000),
-    });
-    await svc.create(OWNER, 'order-1', 'QRIS');
-    expect(midtrans.charge).toHaveBeenCalled();
-  });
-
-  it('ganti metode membuat transaksi baru', async () => {
-    const { svc, midtrans } = ready({
-      midtransOrderId: 'KOMIT-lama-1',
-      method: 'QRIS',
-      expiryTime: new Date(Date.now() + 600_000),
-    });
-    await svc.create(OWNER, 'order-1', 'BNI_VA');
-    expect(midtrans.charge).toHaveBeenCalled();
-  });
-
-  it('pesanan yang sudah lunas tidak bisa ditagih lagi', async () => {
-    const { svc } = ready({ status: PaymentStatus.PAID });
-    await expect(svc.create(OWNER, 'order-1', 'QRIS')).rejects.toThrow(
-      /sudah dibayar/i,
+    expect(sent.transaction_details.order_id).toMatch(/^KOMIT-/);
+    expect(sent.item_details).toEqual([
+      {
+        id: 'product-1',
+        price: 25000,
+        quantity: 2,
+        name: 'Beras Premium',
+      },
+    ]);
+    expect(sent.expiry).toEqual({ duration: 15, unit: 'minute' });
+    expect(sent.page_expiry).toEqual({ duration: 15, unit: 'minute' });
+    expect(result.snapToken).toBe(SNAP_OK.token);
+    expect(result.snapRedirectUrl).toBe(SNAP_OK.redirect_url);
+    expect(result.snapEnvironment).toBe('sandbox');
+    expect(context.payment.update.mock.calls[0][0].data.method).toBe(
+      PaymentMethod.MIDTRANS,
     );
   });
 
-  it('Midtrans menolak charge → galat yang bisa dibaca, tanpa menyimpan apa pun', async () => {
-    const ctx = ready();
-    ctx.midtrans.charge.mockResolvedValue({
-      status_code: '402', status_message: 'Metode tidak aktif',
-    });
-    await expect(ctx.svc.create(OWNER, 'order-1', 'QRIS')).rejects.toBeInstanceOf(
-      BadRequestException,
+  it('memakai ulang token aktif agar klik ganda tidak membuat tagihan baru', async () => {
+    const context = ready(
+      basePayment({
+        midtransOrderId: 'KOMIT-lama-1',
+        transactionStatus: 'pending',
+        snapToken: 'token-lama',
+        snapRedirectUrl: 'https://app.sandbox.midtrans.com/snap/lama',
+        expiryTime: new Date(Date.now() + 600_000),
+      }),
     );
-    expect(ctx.payment.update).not.toHaveBeenCalled();
+    const result = await context.service.create(OWNER, 'order-1');
+    expect(context.midtrans.createSnapTransaction).not.toHaveBeenCalled();
+    expect(result.snapToken).toBe('token-lama');
+  });
+
+  it('membuat token baru ketika sesi lama sudah kedaluwarsa', async () => {
+    const context = ready(
+      basePayment({
+        midtransOrderId: 'KOMIT-lama-1',
+        snapToken: 'token-lama',
+        expiryTime: new Date(Date.now() - 1000),
+      }),
+    );
+    await context.service.create(OWNER, 'order-1');
+    expect(context.midtrans.createSnapTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('pesanan lunas tidak dapat ditagih kembali', async () => {
+    const context = ready(basePayment({ status: PaymentStatus.PAID }));
+    await expect(
+      context.service.create(OWNER, 'order-1'),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });
 
-describe('webhook', () => {
-  const notif = {
+describe('webhook sebagai sumber status', () => {
+  const notification = {
     order_id: 'KOMIT-order1-1700000000',
     status_code: '200',
     gross_amount: '50000.00',
     signature_key: 'benar',
     transaction_id: 'mt-1',
     transaction_status: 'settlement',
+    payment_type: 'qris',
   };
 
-  function ready(over: Record<string, unknown> = {}) {
-    const ctx = build();
-    ctx.payment.findUnique.mockResolvedValue(
-      basePayment({ midtransOrderId: notif.order_id, ...over }),
-    );
-    return ctx;
+  function webhookReady(paymentOver: Record<string, unknown> = {}) {
+    const context = build();
+    const value = basePayment({
+      midtransOrderId: notification.order_id,
+      ...paymentOver,
+    });
+    context.payment.findUnique.mockResolvedValue(value);
+    context.orderTx.findUnique.mockResolvedValue({
+      status: OrderStatus.PENDING,
+      items: order().items,
+    });
+    return context;
   }
 
-  it('tanda tangan tidak sah ditolak dan dicatat', async () => {
-    const ctx = ready();
-    ctx.midtrans.verifySignature.mockReturnValue(false);
-    const out = await ctx.svc.handleNotification(notif);
-    expect(out.applied).toBe(false);
-    expect(out.reason).toMatch(/signature/i);
-    // Dicatat supaya percobaan pemalsuan bisa ditelusuri.
-    expect(ctx.prisma.paymentWebhookEvent.create).toHaveBeenCalled();
+  it('menolak signature atau nominal yang tidak cocok', async () => {
+    const badSignature = webhookReady();
+    badSignature.midtrans.verifySignature.mockReturnValue(false);
+    await expect(
+      badSignature.service.handleNotification(notification),
+    ).resolves.toMatchObject({
+      applied: false,
+      reason: expect.stringMatching(/signature/i),
+    });
+
+    const badAmount = webhookReady();
+    await expect(
+      badAmount.service.handleNotification({
+        ...notification,
+        gross_amount: '1000.00',
+      }),
+    ).resolves.toMatchObject({
+      applied: false,
+      reason: expect.stringMatching(/nominal/i),
+    });
   });
 
-  it('transaksi tak dikenal ditolak', async () => {
-    const ctx = build();
-    ctx.payment.findUnique.mockResolvedValue(null);
-    const out = await ctx.svc.handleNotification(notif);
-    expect(out.reason).toMatch(/tidak dikenal/i);
+  it('settlement menandai pembayaran dan pesanan sebagai lunas', async () => {
+    const context = webhookReady();
+    const result = await context.service.handleNotification(notification);
+
+    expect(result.applied).toBe(true);
+    expect(context.payment.update.mock.calls[0][0].data).toMatchObject({
+      status: PaymentStatus.PAID,
+      transactionStatus: 'settlement',
+      midtransPaymentType: 'qris',
+    });
+    expect(context.orderTx.update.mock.calls[0][0].data).toMatchObject({
+      status: OrderStatus.PAID,
+      paymentStatus: PaymentStatus.PAID,
+    });
   });
 
-  it('nominal yang tidak cocok ditolak', async () => {
-    const ctx = ready();
-    // Notifikasi sah untuk transaksi lain tidak boleh melunasi pesanan ini.
-    const out = await ctx.svc.handleNotification({ ...notif, gross_amount: '1000.00' });
-    expect(out.applied).toBe(false);
-    expect(out.reason).toMatch(/nominal/i);
+  it('expiry membatalkan order dan mengembalikan stok tepat satu kali', async () => {
+    const context = webhookReady();
+    context.prisma.product.update.mockResolvedValue({ stock: 8 });
+
+    await context.service.handleNotification({
+      ...notification,
+      transaction_status: 'expire',
+    });
+
+    expect(context.orderTx.update.mock.calls[0][0].data).toMatchObject({
+      status: OrderStatus.CANCELLED,
+      paymentStatus: PaymentStatus.FAILED,
+    });
+    expect(context.prisma.product.update).toHaveBeenCalledWith({
+      where: { id: 'product-1' },
+      data: { stock: { increment: 2 } },
+    });
+    expect(context.prisma.inventoryTransaction.create).toHaveBeenCalledTimes(1);
   });
 
-  it('notifikasi yang sama dua kali hanya diproses sekali', async () => {
-    const ctx = ready();
-    ctx.prisma.paymentWebhookEvent.create.mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError('dup', {
-        code: 'P2002', clientVersion: 'x',
+  it('status pending terlambat tidak menurunkan settlement', async () => {
+    const context = webhookReady({ transactionStatus: 'settlement' });
+    const result = await context.service.handleNotification({
+      ...notification,
+      transaction_status: 'pending',
+    });
+    expect(result.applied).toBe(false);
+    expect(context.payment.update).not.toHaveBeenCalled();
+  });
+
+  it('event yang sama diproses satu kali', async () => {
+    const context = webhookReady();
+    context.prisma.paymentWebhookEvent.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('duplicate', {
+        code: 'P2002',
+        clientVersion: 'test',
       }),
     );
-    const out = await ctx.svc.handleNotification(notif);
-    expect(out.applied).toBe(false);
-    expect(out.reason).toMatch(/sudah pernah/i);
-  });
-
-  it('settlement menandai lunas dan memindahkan pesanan', async () => {
-    const ctx = ready();
-    const txOrder = { findUnique: jest.fn().mockResolvedValue({ status: OrderStatus.PENDING }), update: jest.fn() };
-    ctx.prisma.$transaction.mockImplementation(async (fn: never) =>
-      (fn as unknown as (t: unknown) => unknown)({ payment: ctx.payment, order: txOrder }),
-    );
-    ctx.payment.findUnique.mockResolvedValue(basePayment({ midtransOrderId: notif.order_id }));
-
-    const out = await ctx.svc.handleNotification(notif);
-    expect(out.applied).toBe(true);
-    expect(ctx.payment.update).toHaveBeenCalled();
-    expect(txOrder.update.mock.calls[0][0].data.status).toBe(OrderStatus.PAID);
-  });
-
-  it('pending yang datang setelah settlement tidak menurunkan status', async () => {
-    const ctx = ready({ transactionStatus: 'settlement' });
-    const txOrder = { findUnique: jest.fn(), update: jest.fn() };
-    ctx.prisma.$transaction.mockImplementation(async (fn: never) =>
-      (fn as unknown as (t: unknown) => unknown)({ payment: ctx.payment, order: txOrder }),
-    );
-    // Midtrans tidak menjamin urutan kedatangan notifikasi.
-    const out = await ctx.svc.handleNotification({ ...notif, transaction_status: 'pending' });
-    expect(out.applied).toBe(false);
-    expect(ctx.payment.update).not.toHaveBeenCalled();
-  });
-
-  it('expire membatalkan pesanan yang masih menunggu', async () => {
-    const ctx = ready();
-    const txOrder = { findUnique: jest.fn().mockResolvedValue({ status: OrderStatus.PENDING }), update: jest.fn() };
-    ctx.prisma.$transaction.mockImplementation(async (fn: never) =>
-      (fn as unknown as (t: unknown) => unknown)({ payment: ctx.payment, order: txOrder }),
-    );
-    await ctx.svc.handleNotification({ ...notif, transaction_status: 'expire' });
-    expect(txOrder.update.mock.calls[0][0].data.status).toBe(OrderStatus.CANCELLED);
-  });
-
-  it('pesanan yang sudah diproses tidak dibatalkan notifikasi terlambat', async () => {
-    const ctx = ready();
-    const txOrder = {
-      findUnique: jest.fn().mockResolvedValue({ status: OrderStatus.PROCESSING }),
-      update: jest.fn(),
-    };
-    ctx.prisma.$transaction.mockImplementation(async (fn: never) =>
-      (fn as unknown as (t: unknown) => unknown)({ payment: ctx.payment, order: txOrder }),
-    );
-    await ctx.svc.handleNotification({ ...notif, transaction_status: 'expire' });
-    // Barang yang sudah dikemas tidak batal karena pembayaran kedaluwarsa
-    // yang datang belakangan.
-    expect(txOrder.update).not.toHaveBeenCalled();
+    await expect(
+      context.service.handleNotification(notification),
+    ).resolves.toMatchObject({
+      applied: false,
+      reason: expect.stringMatching(/pernah/i),
+    });
   });
 });

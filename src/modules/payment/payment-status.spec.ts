@@ -87,7 +87,14 @@ describe('shouldApply', () => {
 
   it('isFinal menandai status yang berhenti berubah', () => {
     expect(isFinal('PENDING')).toBe(false);
-    for (const v of ['PAID', 'DENIED', 'CANCELLED', 'EXPIRED', 'FAILED', 'REFUNDED'] as const) {
+    for (const v of [
+      'PAID',
+      'DENIED',
+      'CANCELLED',
+      'EXPIRED',
+      'FAILED',
+      'REFUNDED',
+    ] as const) {
       expect(isFinal(v)).toBe(true);
     }
   });
@@ -226,22 +233,26 @@ describe('buildMidtransOrderId', () => {
  */
 describe('readExpiryMinutes', () => {
   it('angka yang wajar dipakai apa adanya', () => {
-    expect(PaymentService.readExpiryMinutes('3')).toBe(3);
+    expect(PaymentService.readExpiryMinutes('15')).toBe(15);
     expect(PaymentService.readExpiryMinutes('60')).toBe(60);
   });
 
+  it('durasi terlalu singkat jatuh ke batas aman', () => {
+    expect(PaymentService.readExpiryMinutes('3')).toBe(15);
+  });
+
   it('kosong atau tak disetel jatuh ke bawaan', () => {
-    expect(PaymentService.readExpiryMinutes(undefined)).toBe(3);
-    expect(PaymentService.readExpiryMinutes('')).toBe(3);
+    expect(PaymentService.readExpiryMinutes(undefined)).toBe(15);
+    expect(PaymentService.readExpiryMinutes('')).toBe(15);
   });
 
   it('nol dan negatif ditolak', () => {
-    expect(PaymentService.readExpiryMinutes('0')).toBe(3);
-    expect(PaymentService.readExpiryMinutes('-5')).toBe(3);
+    expect(PaymentService.readExpiryMinutes('0')).toBe(15);
+    expect(PaymentService.readExpiryMinutes('-5')).toBe(15);
   });
 
   it('bukan angka ditolak', () => {
-    expect(PaymentService.readExpiryMinutes('tiga')).toBe(3);
-    expect(PaymentService.readExpiryMinutes('abc')).toBe(3);
+    expect(PaymentService.readExpiryMinutes('tiga')).toBe(15);
+    expect(PaymentService.readExpiryMinutes('abc')).toBe(15);
   });
 });

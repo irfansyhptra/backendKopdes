@@ -1,32 +1,11 @@
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  HttpException,
+} from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { AuthService } from './auth.service';
-
-/**
- * Pendaftaran mandiri: siapa yang boleh, dan email mana yang dianggap sama.
- *
- * Form di aplikasi maupun web hanya menawarkan akun pembeli, tetapi itu
- * kenyamanan — endpoint-nya terbuka, jadi penolakannya harus datang dari
- * service.
- */
-
-type CreatedUser = { data: { role: Role; email: string } };
-
-/// `prisma` di sini objek biasa berisi `jest.fn()`, jadi `mock.calls` bertipe
-/// `any`. Dibaca lewat satu pembantu bertipe supaya assertion-nya tetap aman.
-function firstCreate(create: jest.Mock): CreatedUser {
-  return (create.mock.calls as CreatedUser[][])[0][0];
-}
-
-function build() {
-  const prisma = {
-    user: { findUnique: jest.fn(), create: jest.fn() },
-    refreshToken: { create: jest.fn().mockResolvedValue({}) },
-  };
-  const config = { get: jest.fn().mockReturnValue(undefined) };
-  const service = new AuthService(prisma as never, config as never);
-  return { service, prisma };
-}
 
 const base = {
   email: 'warga@contoh.test',
@@ -34,85 +13,207 @@ const base = {
   name: 'Warga Desa',
 };
 
-describe('AuthService.register', () => {
+function build() {
+  const pending = {
+    upsert: jest.fn().mockResolvedValue({}),
+    findUnique: jest.fn(),
+    update: jest.fn().mockResolvedValue({}),
+    delete: jest.fn().mockResolvedValue({}),
+  };
+  const tx = {
+    user: { create: jest.fn() },
+    customerEmailVerification: { delete: jest.fn().mockResolvedValue({}) },
+  };
+  const prisma = {
+    user: { findUnique: jest.fn(), create: jest.fn() },
+    customerEmailVerification: pending,
+    refreshToken: { create: jest.fn().mockResolvedValue({}) },
+    koperasi: { findUnique: jest.fn() },
+    $transaction: jest.fn((callback: (client: typeof tx) => unknown) =>
+      callback(tx),
+    ),
+  };
+  const config = { get: jest.fn().mockReturnValue(undefined) };
+  const email = {
+    sendCustomerVerification: jest.fn().mockResolvedValue(undefined),
+  };
+  const service = new AuthService(
+    prisma as never,
+    config as never,
+    email as never,
+  );
+  return { service, prisma, pending, tx, email };
+}
+
+function pendingRecord(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'pending-1',
+    email: base.email,
+    passwordHash: 'hashed-password',
+    name: base.name,
+    phone: null,
+    codeHash: '',
+    attempts: 0,
+    expiresAt: new Date(Date.now() + 600_000),
+    resendAllowedAt: new Date(Date.now() - 1_000),
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  };
+}
+
+describe('AuthService customer email verification', () => {
   it.each([Role.UMKM, Role.COURIER, Role.ADMIN_KOPDES, Role.SUPER_ADMIN])(
     'menolak pendaftaran mandiri sebagai %s',
     async (role) => {
-      const { service, prisma } = build();
+      const { service, prisma, pending } = build();
       await expect(service.register({ ...base, role })).rejects.toBeInstanceOf(
         ForbiddenException,
       );
-      // Ditolak sebelum menyentuh basis data sama sekali.
       expect(prisma.user.findUnique).not.toHaveBeenCalled();
-      expect(prisma.user.create).not.toHaveBeenCalled();
+      expect(pending.upsert).not.toHaveBeenCalled();
     },
   );
 
-  it('menerima pembeli, dan itu pula peran yang disimpan', async () => {
-    const { service, prisma } = build();
+  it('menormalkan email, menyimpan hash OTP, lalu mengirim kode melalui email', async () => {
+    const { service, prisma, pending, email } = build();
     prisma.user.findUnique.mockResolvedValue(null);
-    prisma.user.create.mockResolvedValue({
+    const challenge = await service.register({
+      ...base,
+      email: '  Warga@Contoh.TEST ',
+    });
+    expect(challenge).toMatchObject({
+      verificationRequired: true,
+      email: base.email,
+      expiresIn: 600,
+      resendAfter: 60,
+    });
+    expect(pending.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { email: base.email } }),
+    );
+    const code = email.sendCustomerVerification.mock.calls[0][0].code;
+    expect(code).toMatch(/^\d{6}$/);
+    const stored = pending.upsert.mock.calls[0][0].create.codeHash;
+    expect(stored).toMatch(/^[a-f0-9]{64}$/);
+    expect(stored).not.toBe(code);
+  });
+
+  it('menghapus challenge bila email gagal dikirim agar pengguna bisa mencoba lagi', async () => {
+    const { service, prisma, pending, email } = build();
+    prisma.user.findUnique.mockResolvedValue(null);
+    email.sendCustomerVerification.mockRejectedValue(new Error('SMTP gagal'));
+    await expect(service.register(base)).rejects.toThrow('SMTP gagal');
+    expect(pending.delete).toHaveBeenCalledWith({
+      where: { email: base.email },
+    });
+  });
+
+  it('memulihkan challenge lama bila pengiriman pengganti gagal', async () => {
+    const { service, prisma, pending, email } = build();
+    const previous = pendingRecord();
+    prisma.user.findUnique.mockResolvedValue(null);
+    pending.findUnique.mockResolvedValue(previous);
+    email.sendCustomerVerification.mockRejectedValue(new Error('SMTP gagal'));
+
+    await expect(service.register(base)).rejects.toThrow('SMTP gagal');
+
+    expect(pending.update).toHaveBeenCalledWith({
+      where: { email: base.email },
+      data: expect.objectContaining({
+        codeHash: previous.codeHash,
+        expiresAt: previous.expiresAt,
+        attempts: previous.attempts,
+      }),
+    });
+    expect(pending.delete).not.toHaveBeenCalled();
+  });
+
+  it('menolak email yang sudah menjadi akun', async () => {
+    const { service, prisma, pending } = build();
+    prisma.user.findUnique.mockResolvedValue({ id: 'existing' });
+    await expect(service.register(base)).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(pending.upsert).not.toHaveBeenCalled();
+  });
+
+  it('kode benar baru membuat akun CUSTOMER dan menerbitkan sesi', async () => {
+    const { service, prisma, pending, tx, email } = build();
+    prisma.user.findUnique.mockResolvedValue(null);
+    await service.register(base);
+    const code = email.sendCustomerVerification.mock.calls[0][0].code;
+    const codeHash = pending.upsert.mock.calls[0][0].create.codeHash;
+    pending.findUnique.mockResolvedValue(pendingRecord({ codeHash }));
+    tx.user.create.mockResolvedValue({
       id: 'u1',
       email: base.email,
       name: base.name,
+      phone: null,
       role: Role.CUSTOMER,
       permissions: [],
+      kopdesId: null,
     });
-
-    await service.register(base);
-
-    const created = firstCreate(prisma.user.create);
-    expect(created.data.role).toBe(Role.CUSTOMER);
+    const result = await service.verifyCustomerEmail(base.email, code);
+    expect(tx.user.create.mock.calls[0][0].data.role).toBe(Role.CUSTOMER);
+    expect(tx.customerEmailVerification.delete).toHaveBeenCalledWith({
+      where: { email: base.email },
+    });
+    expect(result.accessToken).toBeTruthy();
+    expect(result.user.role).toBe(Role.CUSTOMER);
   });
 
-  it('tanpa peran yang diminta, akun tetap lahir sebagai pembeli', async () => {
-    const { service, prisma } = build();
-    prisma.user.findUnique.mockResolvedValue(null);
-    prisma.user.create.mockResolvedValue({
-      id: 'u1',
-      email: base.email,
-      role: Role.CUSTOMER,
-      permissions: [],
-    });
-
-    await service.register(base);
-
-    const created = firstCreate(prisma.user.create);
-    expect(created.data.role).toBe(Role.CUSTOMER);
-  });
-
-  /**
-   * `login` mencari email dengan `mode: 'insensitive'`, jadi dua ejaan yang
-   * hanya beda huruf besar-kecil adalah satu orang yang sama. Tanpa
-   * normalisasi di sini, keduanya lolos sebagai dua akun dan salah satunya
-   * tidak akan pernah bisa masuk.
-   */
-  it('menormalkan email sebelum memeriksa duplikat', async () => {
-    const { service, prisma } = build();
-    prisma.user.findUnique.mockResolvedValue({ id: 'sudah-ada' });
-
+  it('kode salah menambah jumlah percobaan tanpa membuat akun', async () => {
+    const { service, pending, tx } = build();
+    pending.findUnique.mockResolvedValue(
+      pendingRecord({ codeHash: '00'.repeat(32) }),
+    );
     await expect(
-      service.register({ ...base, email: '  Warga@Contoh.TEST ' }),
-    ).rejects.toBeInstanceOf(ConflictException);
-
-    expect(prisma.user.findUnique).toHaveBeenCalledWith({
-      where: { email: 'warga@contoh.test' },
+      service.verifyCustomerEmail(base.email, '123456'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(pending.update).toHaveBeenCalledWith({
+      where: { email: base.email },
+      data: { attempts: { increment: 1 } },
     });
+    expect(tx.user.create).not.toHaveBeenCalled();
   });
 
-  it('menyimpan email yang sudah dinormalkan, bukan yang diketik', async () => {
-    const { service, prisma } = build();
-    prisma.user.findUnique.mockResolvedValue(null);
-    prisma.user.create.mockResolvedValue({
-      id: 'u1',
-      email: base.email,
-      role: Role.CUSTOMER,
-      permissions: [],
+  it('memblokir verifikasi setelah lima percobaan', async () => {
+    const { service, pending } = build();
+    pending.findUnique.mockResolvedValue(pendingRecord({ attempts: 5 }));
+    await expect(
+      service.verifyCustomerEmail(base.email, '123456'),
+    ).rejects.toBeInstanceOf(HttpException);
+  });
+
+  it('menolak kirim ulang selama cooldown masih aktif', async () => {
+    const { service, pending, email } = build();
+    pending.findUnique.mockResolvedValue(
+      pendingRecord({ resendAllowedAt: new Date(Date.now() + 30_000) }),
+    );
+    await expect(
+      service.resendCustomerEmailOtp(base.email),
+    ).rejects.toBeInstanceOf(HttpException);
+    expect(email.sendCustomerVerification).not.toHaveBeenCalled();
+  });
+
+  it('kirim ulang merotasi kode dan mengulang batas percobaan', async () => {
+    const { service, pending, email } = build();
+    const previous = pendingRecord({
+      codeHash: '00'.repeat(32),
+      attempts: 4,
     });
+    pending.findUnique.mockResolvedValue(previous);
 
-    await service.register({ ...base, email: 'Warga@Contoh.TEST' });
+    const challenge = await service.resendCustomerEmailOtp(base.email);
 
-    const created = firstCreate(prisma.user.create);
-    expect(created.data.email).toBe('warga@contoh.test');
+    expect(challenge.resendAfter).toBe(60);
+    expect(pending.update).toHaveBeenCalledWith({
+      where: { email: base.email },
+      data: expect.objectContaining({ attempts: 0 }),
+    });
+    const nextHash = pending.update.mock.calls[0][0].data.codeHash;
+    expect(nextHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(nextHash).not.toBe(previous.codeHash);
+    expect(email.sendCustomerVerification).toHaveBeenCalledTimes(1);
   });
 });

@@ -38,7 +38,8 @@ export class CreateTopUpDto {
   amount!: number;
 
   @IsIn(TOPUP_METHODS)
-  paymentMethod!: (typeof TOPUP_METHODS)[number];
+  @IsOptional()
+  paymentMethod?: (typeof TOPUP_METHODS)[number];
 }
 
 export class WalletEntryQueryDto {

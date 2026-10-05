@@ -21,6 +21,13 @@ export const PAYMENT_METHODS = [
 
 export type MidtransMethod = (typeof PAYMENT_METHODS)[number];
 
+/** Jawaban pembuatan sesi checkout Snap. */
+export interface MidtransSnapResponse {
+  token: string;
+  redirect_url: string;
+  error_messages?: string[];
+}
+
 /** Satu tindakan yang ditawarkan Midtrans (QR, deeplink, cek status). */
 export interface MidtransAction {
   name: string;

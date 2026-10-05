@@ -5,7 +5,10 @@ import {
   ConflictException,
   NotFoundException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
+import { createHmac, randomInt, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../../database/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { Prisma, Role } from '@prisma/client';
@@ -13,6 +16,7 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { JwtHelper, PasswordHelper } from './helpers/crypto.helper';
 import { resolvePermissions } from '../../common/permissions';
+import { AuthEmailService } from './auth-email.service';
 
 /**
  * Hanya pembeli yang boleh mendaftar sendiri.
@@ -30,19 +34,27 @@ import { resolvePermissions } from '../../common/permissions';
  *   pun dan tidak ada pesanan yang bisa diberikan kepadanya.
  */
 const SELF_REGISTER_ROLES: Role[] = [Role.CUSTOMER];
+const OTP_EXPIRES_MINUTES = 10;
+const OTP_RESEND_SECONDS = 60;
+const OTP_MAX_ATTEMPTS = 5;
 
 @Injectable()
 export class AuthService {
   private readonly jwtSecret: string;
   private readonly jwtExpiresIn: number; // in seconds
   private readonly refreshExpiresIn: number; // in seconds
+  private readonly otpSecret: string;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
+    private readonly emailService: AuthEmailService,
   ) {
     this.jwtSecret =
       this.configService.get<string>('JWT_SECRET') || 'default_jwt_secret';
+    this.otpSecret =
+      this.configService.get<string>('OTP_SECRET') ||
+      `${this.jwtSecret}:customer-email-verification`;
 
     // Bentuknya "15m", "7d", "365d".
     const accessExpires =
@@ -114,32 +126,227 @@ export class AuthService {
       throw new ConflictException('Email sudah terdaftar');
     }
 
-    const hashedPassword = PasswordHelper.hash(dto.password);
+    const previous = await this.prisma.customerEmailVerification.findUnique({
+      where: { email },
+    });
+    const currentTime = new Date();
+    if (
+      previous &&
+      previous.expiresAt > currentTime &&
+      previous.resendAllowedAt > currentTime
+    ) {
+      const seconds = Math.ceil(
+        (previous.resendAllowedAt.getTime() - currentTime.getTime()) / 1000,
+      );
+      throw new HttpException(
+        `Kode sudah dikirim. Coba lagi dalam ${seconds} detik.`,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const code = this.createOtp();
+    const passwordHash = PasswordHelper.hash(dto.password);
+    const now = currentTime;
+    const expiresAt = new Date(now.getTime() + OTP_EXPIRES_MINUTES * 60_000);
+    const resendAllowedAt = new Date(now.getTime() + OTP_RESEND_SECONDS * 1000);
+
+    await this.prisma.customerEmailVerification.upsert({
+      where: { email },
+      create: {
+        email,
+        passwordHash,
+        name: dto.name.trim(),
+        phone: dto.phone?.trim() || null,
+        codeHash: this.hashOtp(email, code),
+        expiresAt,
+        resendAllowedAt,
+      },
+      update: {
+        passwordHash,
+        name: dto.name.trim(),
+        phone: dto.phone?.trim() || null,
+        codeHash: this.hashOtp(email, code),
+        expiresAt,
+        resendAllowedAt,
+        attempts: 0,
+      },
+    });
 
     try {
-      const user = await this.prisma.user.create({
-        data: {
-          email,
-          password: hashedPassword,
-          name: dto.name.trim(),
-          phone: dto.phone?.trim() || null,
-          role: requestedRole,
-        },
+      await this.emailService.sendCustomerVerification({
+        email,
+        name: dto.name.trim(),
+        code,
+        expiresInMinutes: OTP_EXPIRES_MINUTES,
       });
+    } catch (error) {
+      // Pendaftaran tidak boleh tertahan oleh kode yang tidak pernah sampai.
+      // Jika ini pengiriman ulang melalui form daftar, pertahankan kode lama
+      // yang masih tersimpan agar gangguan SMTP tidak merusak challenge itu.
+      if (previous) {
+        await this.prisma.customerEmailVerification
+          .update({
+            where: { email },
+            data: {
+              passwordHash: previous.passwordHash,
+              name: previous.name,
+              phone: previous.phone,
+              codeHash: previous.codeHash,
+              expiresAt: previous.expiresAt,
+              resendAllowedAt: previous.resendAllowedAt,
+              attempts: previous.attempts,
+            },
+          })
+          .catch(() => undefined);
+      } else {
+        await this.prisma.customerEmailVerification
+          .delete({ where: { email } })
+          .catch(() => undefined);
+      }
+      throw error;
+    }
 
-      return this.generateAuthResponse(user);
-    } catch (e) {
-      // Dua pendaftaran serentak sama-sama lolos pemeriksaan di atas; yang
-      // kalah ditolak indeks unik. Itu tetap "email sudah terdaftar", bukan
-      // galat server.
+    return this.verificationChallenge(email);
+  }
+
+  async verifyCustomerEmail(emailInput: string, code: string) {
+    const email = emailInput.trim().toLowerCase();
+    const pending = await this.prisma.customerEmailVerification.findUnique({
+      where: { email },
+    });
+
+    if (!pending || pending.expiresAt <= new Date()) {
+      if (pending) {
+        await this.prisma.customerEmailVerification.delete({
+          where: { email },
+        });
+      }
+      throw new BadRequestException(
+        'Kode verifikasi sudah kedaluwarsa. Daftarkan akun kembali.',
+      );
+    }
+    if (pending.attempts >= OTP_MAX_ATTEMPTS) {
+      throw new HttpException(
+        'Terlalu banyak percobaan. Kirim ulang kode untuk melanjutkan.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const expected = Buffer.from(pending.codeHash, 'hex');
+    const received = Buffer.from(this.hashOtp(email, code), 'hex');
+    const matches =
+      expected.length === received.length &&
+      timingSafeEqual(expected, received);
+    if (!matches) {
+      await this.prisma.customerEmailVerification.update({
+        where: { email },
+        data: { attempts: { increment: 1 } },
+      });
+      throw new BadRequestException('Kode verifikasi tidak tepat.');
+    }
+
+    let user;
+    try {
+      user = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.user.create({
+          data: {
+            email: pending.email,
+            password: pending.passwordHash,
+            name: pending.name,
+            phone: pending.phone,
+            role: Role.CUSTOMER,
+          },
+        });
+        await tx.customerEmailVerification.delete({ where: { email } });
+        return created;
+      });
+    } catch (error) {
       if (
-        e instanceof Prisma.PrismaClientKnownRequestError &&
-        e.code === 'P2002'
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
       ) {
         throw new ConflictException('Email sudah terdaftar');
       }
-      throw e;
+      throw error;
     }
+
+    return this.generateAuthResponse(user);
+  }
+
+  async resendCustomerEmailOtp(emailInput: string) {
+    const email = emailInput.trim().toLowerCase();
+    const pending = await this.prisma.customerEmailVerification.findUnique({
+      where: { email },
+    });
+    if (!pending || pending.expiresAt <= new Date()) {
+      throw new BadRequestException(
+        'Pendaftaran tidak ditemukan atau sudah kedaluwarsa. Daftarkan akun kembali.',
+      );
+    }
+
+    const now = new Date();
+    if (pending.resendAllowedAt > now) {
+      const seconds = Math.ceil(
+        (pending.resendAllowedAt.getTime() - now.getTime()) / 1000,
+      );
+      throw new HttpException(
+        `Kode baru dapat dikirim dalam ${seconds} detik.`,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const code = this.createOtp();
+    const expiresAt = new Date(now.getTime() + OTP_EXPIRES_MINUTES * 60_000);
+    const resendAllowedAt = new Date(now.getTime() + OTP_RESEND_SECONDS * 1000);
+    await this.prisma.customerEmailVerification.update({
+      where: { email },
+      data: {
+        codeHash: this.hashOtp(email, code),
+        expiresAt,
+        resendAllowedAt,
+        attempts: 0,
+      },
+    });
+
+    try {
+      await this.emailService.sendCustomerVerification({
+        email,
+        name: pending.name,
+        code,
+        expiresInMinutes: OTP_EXPIRES_MINUTES,
+      });
+    } catch (error) {
+      await this.prisma.customerEmailVerification.update({
+        where: { email },
+        data: {
+          codeHash: pending.codeHash,
+          expiresAt: pending.expiresAt,
+          resendAllowedAt: pending.resendAllowedAt,
+          attempts: pending.attempts,
+        },
+      });
+      throw error;
+    }
+    return this.verificationChallenge(email);
+  }
+
+  private createOtp() {
+    return randomInt(0, 1_000_000).toString().padStart(6, '0');
+  }
+
+  private hashOtp(email: string, code: string) {
+    return createHmac('sha256', this.otpSecret)
+      .update(`customer:${email}:${code}`)
+      .digest('hex');
+  }
+
+  private verificationChallenge(email: string) {
+    return {
+      verificationRequired: true as const,
+      email,
+      expiresIn: OTP_EXPIRES_MINUTES * 60,
+      resendAfter: OTP_RESEND_SECONDS,
+    };
   }
 
   async login(dto: LoginDto) {

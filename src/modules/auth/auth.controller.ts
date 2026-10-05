@@ -1,8 +1,23 @@
-import { Controller, Post, Get, Put, Body, UseGuards, Request, HttpCode, HttpStatus } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Get,
+  Put,
+  Body,
+  UseGuards,
+  Request,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import {
+  ResendEmailOtpDto,
+  VerifyEmailOtpDto,
+} from './dto/verify-email-otp.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
 @Controller('auth')
@@ -10,8 +25,31 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('register')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   async register(@Body() dto: RegisterDto) {
     const data = await this.authService.register(dto);
+    return { success: true, data };
+  }
+
+  @Post('verify-email')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async verifyEmail(@Body() dto: VerifyEmailOtpDto) {
+    const data = await this.authService.verifyCustomerEmail(
+      dto.email,
+      dto.code,
+    );
+    return { success: true, data };
+  }
+
+  @Post('resend-verification')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async resendVerification(@Body() dto: ResendEmailOtpDto) {
+    const data = await this.authService.resendCustomerEmailOtp(dto.email);
     return { success: true, data };
   }
 
@@ -43,7 +81,10 @@ export class AuthController {
     @Body('name') name: string,
     @Body('phone') phone?: string,
   ) {
-    const data = await this.authService.updateProfile(req.user.id, { name, phone });
+    const data = await this.authService.updateProfile(req.user.id, {
+      name,
+      phone,
+    });
     return { success: true, data };
   }
 

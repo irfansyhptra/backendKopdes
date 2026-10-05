@@ -1,4 +1,4 @@
-import { IsIn, IsNotEmpty, IsString } from 'class-validator';
+import { IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import { PAYMENT_METHODS, type MidtransMethod } from '../midtrans.types';
 
 /**
@@ -13,8 +13,11 @@ export class CreatePaymentDto {
   @IsNotEmpty({ message: 'Pesanan wajib disebutkan.' })
   orderId!: string;
 
+  // Masih diterima untuk kompatibilitas aplikasi lama, tetapi diabaikan.
+  // Kanal pembayaran sekarang dipilih di popup Snap.
+  @IsOptional()
   @IsIn(PAYMENT_METHODS, {
     message: 'Metode pembayaran tidak didukung.',
   })
-  paymentMethod!: MidtransMethod;
+  paymentMethod?: MidtransMethod;
 }

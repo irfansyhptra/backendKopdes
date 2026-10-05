@@ -52,7 +52,7 @@ class EnvironmentVariables {
    * kalau ada yang mencoba mengunggah.
    */
   /**
-   * Menit sebelum tagihan Midtrans kedaluwarsa. Kosong = 3 menit.
+   * Menit sebelum sesi Snap Midtrans kedaluwarsa. Kosong = 15 menit.
    *
    * Opsional, dan nilai yang tidak masuk akal ditolak di service alih-alih
    * di sini — supaya salah ketik tidak menjatuhkan seluruh API saat start.
@@ -60,6 +60,18 @@ class EnvironmentVariables {
   @IsString()
   @IsOptional()
   MIDTRANS_EXPIRY_MINUTES?: string;
+
+  @IsString()
+  @IsOptional()
+  MIDTRANS_SERVER_KEY?: string;
+
+  @IsString()
+  @IsOptional()
+  MIDTRANS_CLIENT_KEY?: string;
+
+  @IsString()
+  @IsOptional()
+  MIDTRANS_IS_PRODUCTION?: string;
 
   /**
    * Alamat publik API termasuk `/api/v1`, untuk `callback_url` e-wallet.
@@ -113,6 +125,14 @@ class EnvironmentVariables {
   @IsString()
   @IsOptional()
   SMTP_PASS?: string;
+
+  @IsString()
+  @IsOptional()
+  SMTP_FROM?: string;
+
+  @IsString()
+  @IsOptional()
+  OTP_SECRET?: string;
 
   @IsString()
   @IsOptional()

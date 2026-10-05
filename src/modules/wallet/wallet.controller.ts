@@ -3,22 +3,19 @@ import {
   Body,
   Controller,
   Get,
-  Logger,
   Param,
   Post,
   Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { Role, TopUpStatus } from '@prisma/client';
+import { PaymentMethod, Role, TopUpStatus } from '@prisma/client';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import type { AuthenticatedRequest } from '../auth/authenticated-request';
 import { MidtransService } from '../payment/midtrans.service';
-import { chargePayloadFor } from '../payment/midtrans.types';
-import { normalizeCharge } from '../payment/payment-status';
 import { PrismaService } from '../../database/prisma.service';
 import { WalletService } from './wallet.service';
 import {
@@ -36,8 +33,6 @@ import {
 @Controller('wallet')
 @UseGuards(JwtAuthGuard)
 export class WalletController {
-  private readonly logger = new Logger(WalletController.name);
-
   constructor(
     private readonly wallet: WalletService,
     private readonly midtrans: MidtransService,
@@ -75,7 +70,7 @@ export class WalletController {
     const topUp = await this.wallet.createTopUp(
       req.user.id,
       dto.amount,
-      dto.paymentMethod,
+      PaymentMethod.MIDTRANS,
     );
 
     const customer = await this.prisma.user.findUnique({
@@ -83,55 +78,45 @@ export class WalletController {
       select: { name: true, email: true, phone: true },
     });
 
-    const res = await this.midtrans.charge({
-      ...chargePayloadFor(dto.paymentMethod),
-      transaction_details: {
-        order_id: topUp.midtransOrderId,
-        gross_amount: dto.amount,
-      },
-      customer_details: {
-        first_name: customer?.name ?? 'Warga',
-        email: customer?.email,
-        ...(customer?.phone ? { phone: customer.phone } : {}),
-      },
-      item_details: [
-        {
-          id: 'TOPUP',
-          price: dto.amount,
-          quantity: 1,
-          name: 'Isi ulang saldo KMP Mitra',
+    const res = await this.midtrans
+      .createSnapTransaction({
+        transaction_details: {
+          order_id: topUp.midtransOrderId,
+          gross_amount: dto.amount,
         },
-      ],
-    });
-
-    // 201 dan 200 sama-sama berhasil di Midtrans; selain itu tagihannya tidak
-    // pernah ada, jadi isi ulangnya ditutup daripada menggantung PENDING.
-    if (res.status_code !== '201' && res.status_code !== '200') {
-      await this.wallet.closeTopUp(topUp.id, TopUpStatus.FAILED);
-      this.logger.warn(
-        `Charge isi ulang ditolak (${res.status_code}) untuk ${topUp.midtransOrderId}`,
-      );
-      throw new BadRequestException(
-        res.status_message ?? 'Tagihan isi ulang gagal dibuat.',
-      );
-    }
-
-    const normalized = normalizeCharge(res, dto.paymentMethod);
+        customer_details: {
+          first_name: customer?.name ?? 'Warga',
+          email: customer?.email,
+          ...(customer?.phone ? { phone: customer.phone } : {}),
+        },
+        item_details: [
+          {
+            id: 'TOPUP',
+            price: dto.amount,
+            quantity: 1,
+            name: 'Isi ulang saldo KMP Mitra',
+          },
+        ],
+        expiry: { duration: 15, unit: 'minute' },
+        page_expiry: { duration: 15, unit: 'minute' },
+        credit_card: { secure: true },
+      })
+      .catch(async (error: unknown) => {
+        await this.wallet.closeTopUp(topUp.id, TopUpStatus.FAILED);
+        throw error;
+      });
     const saved = await this.wallet.saveTopUpCharge(topUp.id, {
-      // `normalizeCharge` memakai null untuk "tidak ada"; DTO service memakai
-      // undefined. Disamakan di sini, bukan dengan melonggarkan tipenya.
-      transactionId: normalized.transactionId ?? undefined,
-      transactionStatus: normalized.transactionStatus ?? undefined,
-      fraudStatus: normalized.fraudStatus ?? undefined,
+      snapToken: res.token,
+      snapRedirectUrl: res.redirect_url,
+      transactionStatus: 'pending',
       actions: {
-        qrCodeUrl: normalized.qrCodeUrl,
-        deeplinkUrl: normalized.deeplinkUrl,
-        vaNumber: normalized.vaNumber,
-        bank: normalized.bank,
-        billKey: normalized.billKey,
-        billerCode: normalized.billerCode,
+        snapToken: res.token,
+        snapRedirectUrl: res.redirect_url,
+        snapClientKey: this.midtrans.publicClientKey,
+        snapScriptUrl: this.midtrans.snapJsUrl,
+        snapEnvironment: 'sandbox',
       },
-      expiresAt: normalized.expiryTime ? new Date(normalized.expiryTime) : null,
+      expiresAt: new Date(Date.now() + 15 * 60_000),
     });
 
     return {

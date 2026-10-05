@@ -5,20 +5,23 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { OrderStatus, PaymentStatus, Prisma } from '@prisma/client';
+import {
+  OrderStatus,
+  PaymentMethod,
+  PaymentStatus,
+  Prisma,
+} from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../database/prisma.service';
 import { CacheService } from '../../cache/cache.service';
 import { MidtransService } from './midtrans.service';
 import {
-  chargePayloadFor,
   type MidtransChargeResponse,
   type MidtransMethod,
   type MidtransNotification,
 } from './midtrans.types';
 import {
   isFinal,
-  normalizeCharge,
   orderStatusFor,
   paymentStatusFrom,
   shouldApply,
@@ -33,10 +36,15 @@ export interface PaymentSnapshot extends NormalizedCharge {
   method: string;
   status: PaymentView;
   paidAt: string | null;
+  snapToken: string | null;
+  snapRedirectUrl: string | null;
+  snapClientKey: string | null;
+  snapScriptUrl: string;
+  snapEnvironment: 'sandbox';
 }
 
 /**
- * Pembayaran pesanan lewat Midtrans Core API.
+ * Pembayaran pesanan lewat Midtrans Snap Sandbox.
  *
  * Tiga aturan yang dijaga di sini, bukan di klien:
  *
@@ -75,14 +83,14 @@ export class PaymentService {
    * Membaca masa berlaku dari konfigurasi.
    *
    * Nilai yang tidak masuk akal — kosong, bukan angka, nol, atau negatif —
-   * jatuh ke 3 menit alih-alih diteruskan ke Midtrans. Angka nol di sana
+   * jatuh ke 15 menit alih-alih diteruskan ke Midtrans. Angka nol di sana
    * membuat tagihan kedaluwarsa sebelum sempat dibuka.
    */
-  static readonly DEFAULT_EXPIRY_MINUTES = 3;
+  static readonly DEFAULT_EXPIRY_MINUTES = 15;
 
   static readExpiryMinutes(raw: string | undefined): number {
     const n = Number.parseInt(raw ?? '', 10);
-    return Number.isFinite(n) && n > 0
+    return Number.isFinite(n) && n >= 5
       ? n
       : PaymentService.DEFAULT_EXPIRY_MINUTES;
   }
@@ -98,7 +106,15 @@ export class PaymentService {
   private async ownedOrderOrThrow(orderId: string, userId: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      include: { payment: true },
+      include: {
+        payment: true,
+        items: {
+          include: {
+            product: { select: { name: true } },
+            umkmProduct: { select: { name: true } },
+          },
+        },
+      },
     });
     if (!order) throw new NotFoundException('Pesanan tidak ditemukan.');
     // Pesanan orang lain dijawab "tidak ditemukan": membedakannya dari
@@ -109,29 +125,33 @@ export class PaymentService {
     return order;
   }
 
-  private snapshot(
-    payment: {
-      orderId: string;
-      method: string;
-      status: PaymentStatus;
-      amount: Prisma.Decimal;
-      midtransOrderId: string | null;
-      transactionId: string | null;
-      midtransPaymentType: string | null;
-      transactionStatus: string | null;
-      fraudStatus: string | null;
-      expiryTime: Date | null;
-      vaNumber: string | null;
-      bank: string | null;
-      qrCodeUrl: string | null;
-      deeplinkUrl: string | null;
-      paidAt: Date | null;
-    },
-  ): PaymentSnapshot {
+  private snapshot(payment: {
+    orderId: string;
+    method: string;
+    status: PaymentStatus;
+    amount: Prisma.Decimal;
+    midtransOrderId: string | null;
+    transactionId: string | null;
+    midtransPaymentType: string | null;
+    transactionStatus: string | null;
+    fraudStatus: string | null;
+    expiryTime: Date | null;
+    vaNumber: string | null;
+    bank: string | null;
+    qrCodeUrl: string | null;
+    deeplinkUrl: string | null;
+    paidAt: Date | null;
+    snapToken: string | null;
+    snapRedirectUrl: string | null;
+  }): PaymentSnapshot {
+    const status = viewFromMidtrans(
+      payment.transactionStatus,
+      payment.fraudStatus,
+    );
     return {
       orderId: payment.orderId,
       method: payment.method,
-      status: viewFromMidtrans(payment.transactionStatus, payment.fraudStatus),
+      status,
       midtransOrderId: payment.midtransOrderId,
       transactionId: payment.transactionId,
       paymentType: payment.midtransPaymentType,
@@ -147,6 +167,14 @@ export class PaymentService {
       deeplinkUrl: payment.deeplinkUrl,
       actions: [],
       paidAt: payment.paidAt?.toISOString() ?? null,
+      snapToken: status === 'PENDING' ? payment.snapToken : null,
+      snapRedirectUrl: status === 'PENDING' ? payment.snapRedirectUrl : null,
+      snapClientKey:
+        status === 'PENDING' && payment.snapToken
+          ? this.midtrans.publicClientKey
+          : null,
+      snapScriptUrl: this.midtrans.snapJsUrl,
+      snapEnvironment: 'sandbox',
     };
   }
 
@@ -155,7 +183,7 @@ export class PaymentService {
   async create(
     userId: string,
     orderId: string,
-    method: MidtransMethod,
+    _legacyMethod?: MidtransMethod,
   ): Promise<PaymentSnapshot> {
     const order = await this.ownedOrderOrThrow(orderId, userId);
     const payment = order.payment;
@@ -182,7 +210,7 @@ export class PaymentService {
      */
     const reusable =
       payment.midtransOrderId &&
-      payment.method === method &&
+      payment.snapToken &&
       payment.status === PaymentStatus.PENDING &&
       !this.expired(payment.expiryTime);
 
@@ -203,29 +231,21 @@ export class PaymentService {
       select: { name: true, email: true, phone: true },
     });
 
-    const res = await this.midtrans.charge({
-      ...chargePayloadFor(method),
+    const res = await this.midtrans.createSnapTransaction({
       transaction_details: {
         order_id: midtransOrderId,
         gross_amount: grossAmount,
       },
-      /**
-       * Masa berlaku tagihan.
-       *
-       * Tanpa ini Midtrans memakai bawaannya sendiri — 15 menit untuk QRIS,
-       * 24 jam untuk Virtual Account — dan keduanya terlalu lama untuk
-       * dipantau di layar konfirmasi.
-       *
-       * `order_time` sengaja tidak dikirim: formatnya menuntut zona waktu
-       * eksplisit (`+0700`), dan jam server yang meleset sedikit saja
-       * membuat Midtrans menolak seluruh transaksi. Dikosongkan berarti
-       * Midtrans menghitung dari waktu terimanya sendiri, yang justru lebih
-       * tepat.
-       */
-      custom_expiry: {
-        expiry_duration: this.expiryMinutes,
+      item_details: this.snapItemDetails(order.items, grossAmount),
+      expiry: {
+        duration: this.expiryMinutes,
         unit: 'minute',
       },
+      page_expiry: {
+        duration: this.expiryMinutes,
+        unit: 'minute',
+      },
+      credit_card: { secure: true },
       customer_details: {
         first_name: customer?.name ?? 'Pelanggan',
         email: customer?.email,
@@ -233,54 +253,84 @@ export class PaymentService {
       },
     });
 
-    // Midtrans memakai `status_code` 2xx untuk berhasil; selain itu transaksi
-    // tidak terbentuk dan tidak ada yang layak disimpan.
-    if (!res.status_code?.startsWith('2')) {
-      this.logger.warn(
-        `Charge ditolak Midtrans (${res.status_code}) untuk ${midtransOrderId}`,
-      );
-      throw new BadRequestException(
-        res.status_message ?? 'Transaksi pembayaran gagal dibuat.',
-      );
-    }
-
-    const normalized = normalizeCharge(res, method);
-    const view = viewFromMidtrans(
-      normalized.transactionStatus,
-      normalized.fraudStatus,
-    );
+    const expiryTime = new Date(Date.now() + this.expiryMinutes * 60_000);
 
     const saved = await this.prisma.payment.update({
       where: { id: payment.id },
       data: {
-        method,
-        status: paymentStatusFrom(view),
+        method: PaymentMethod.MIDTRANS,
+        status: PaymentStatus.PENDING,
         midtransOrderId,
-        transactionId: normalized.transactionId,
-        midtransPaymentType: normalized.paymentType,
-        transactionStatus: normalized.transactionStatus,
-        fraudStatus: normalized.fraudStatus,
-        bank: normalized.bank,
-        vaNumber: normalized.vaNumber,
-        qrCodeUrl: normalized.qrCodeUrl,
-        deeplinkUrl: normalized.deeplinkUrl,
-        expiryTime: normalized.expiryTime
-          ? new Date(normalized.expiryTime)
-          : null,
+        snapToken: res.token,
+        snapRedirectUrl: res.redirect_url,
+        transactionId: null,
+        midtransPaymentType: null,
+        transactionStatus: 'pending',
+        fraudStatus: null,
+        bank: null,
+        vaNumber: null,
+        qrCodeUrl: null,
+        deeplinkUrl: null,
+        expiryTime,
         rawResponse: res as unknown as Prisma.InputJsonValue,
       },
     });
 
+    await this.prisma.order.update({
+      where: { id: orderId },
+      data: { paymentMethod: PaymentMethod.MIDTRANS },
+    });
+
     await this.invalidate(orderId);
 
-    return {
-      ...this.snapshot(saved),
-      // Aksi dan kunci tagihan hanya ada pada respons charge; tidak disimpan
-      // karena bisa diambil ulang lewat status bila benar-benar dibutuhkan.
-      actions: normalized.actions,
-      billKey: normalized.billKey,
-      billerCode: normalized.billerCode,
-    };
+    return this.snapshot(saved);
+  }
+
+  /** Semua produk dibekukan ke item Snap agar popup dan total dapat diaudit. */
+  private snapItemDetails(
+    items: Array<{
+      id: string;
+      productId: string | null;
+      umkmProductId: string | null;
+      quantity: number;
+      price: Prisma.Decimal;
+      product: { name: string } | null;
+      umkmProduct: { name: string } | null;
+    }>,
+    grossAmount: number,
+  ) {
+    const details = items.map((item) => ({
+      id: (item.productId ?? item.umkmProductId ?? item.id).slice(0, 50),
+      price: Math.round(Number(item.price)),
+      quantity: item.quantity,
+      name: (
+        item.product?.name ??
+        item.umkmProduct?.name ??
+        'Produk KOMIT'
+      ).slice(0, 50),
+    }));
+    const subtotal = details.reduce(
+      (sum, item) => sum + item.price * item.quantity,
+      0,
+    );
+    const adjustment = grossAmount - subtotal;
+    if (adjustment !== 0) {
+      details.push({
+        id: adjustment > 0 ? 'ORDER-FEE' : 'ORDER-DISCOUNT',
+        price: adjustment,
+        quantity: 1,
+        name: adjustment > 0 ? 'Ongkir dan biaya' : 'Diskon pesanan',
+      });
+    }
+    if (details.length === 0) {
+      details.push({
+        id: 'ORDER',
+        price: grossAmount,
+        quantity: 1,
+        name: 'Pesanan KOMIT',
+      });
+    }
+    return details;
   }
 
   private expired(expiryTime: Date | null): boolean {
@@ -298,22 +348,10 @@ export class PaymentService {
   }
 
   /**
-   * Menanyakan status langsung ke Midtrans.
-   *
-   * Jaring pengaman bila webhook tidak sampai — bukan jalur utama. Hasilnya
-   * diperlakukan persis seperti notifikasi, lewat penerap yang sama, supaya
-   * aturan "status akhir tidak turun" berlaku di kedua jalur.
+   * Membaca status yang sudah disahkan webhook. Endpoint dipertahankan agar
+   * klien lama tetap bekerja, tetapi tidak lagi memanggil Core Status API.
    */
   async checkStatus(userId: string, orderId: string): Promise<PaymentSnapshot> {
-    const order = await this.ownedOrderOrThrow(orderId, userId);
-    const payment = order.payment;
-    if (!payment?.midtransOrderId) {
-      throw new NotFoundException('Transaksi pembayaran belum dibuat.');
-    }
-
-    const res = await this.midtrans.status(payment.midtransOrderId);
-    await this.applyStatus(payment.id, orderId, res);
-
     return this.get(userId, orderId);
   }
 
@@ -354,6 +392,8 @@ export class PaymentService {
           fraudStatus: (res.fraud_status as string) ?? null,
           transactionId:
             (res.transaction_id as string) ?? payment.transactionId,
+          midtransPaymentType:
+            (res.payment_type as string) ?? payment.midtransPaymentType,
           paidAt: incoming === 'PAID' ? new Date() : payment.paidAt,
         },
       });
@@ -362,7 +402,7 @@ export class PaymentService {
       if (nextOrderStatus) {
         const order = await tx.order.findUnique({
           where: { id: orderId },
-          select: { status: true },
+          select: { status: true, items: true },
         });
         // Hanya pesanan yang masih menunggu yang ikut berpindah. Pesanan
         // yang sudah diproses tidak mundur karena notifikasi terlambat, dan
@@ -370,8 +410,45 @@ export class PaymentService {
         if (order?.status === OrderStatus.PENDING) {
           await tx.order.update({
             where: { id: orderId },
-            data: { status: nextOrderStatus },
+            data: {
+              status: nextOrderStatus,
+              paymentStatus: paymentStatusFrom(incoming),
+            },
           });
+
+          if (nextOrderStatus === OrderStatus.CANCELLED) {
+            for (const item of order.items) {
+              if (item.productId) {
+                const restored = await tx.product.update({
+                  where: { id: item.productId },
+                  data: { stock: { increment: item.quantity } },
+                });
+                await tx.inventoryTransaction.create({
+                  data: {
+                    productId: item.productId,
+                    type: 'IN',
+                    quantity: item.quantity,
+                    stockAfter: restored.stock,
+                    reason: `Pembayaran order #${orderId} tidak selesai`,
+                  },
+                });
+              } else if (item.umkmProductId) {
+                const restored = await tx.uMKMProduct.update({
+                  where: { id: item.umkmProductId },
+                  data: { stock: { increment: item.quantity } },
+                });
+                await tx.inventoryTransaction.create({
+                  data: {
+                    umkmProductId: item.umkmProductId,
+                    type: 'IN',
+                    quantity: item.quantity,
+                    stockAfter: restored.stock,
+                    reason: `Pembayaran order #${orderId} tidak selesai`,
+                  },
+                });
+              }
+            }
+          }
         }
       }
 
@@ -459,9 +536,7 @@ export class PaymentService {
   }
 
   private async invalidate(orderId: string) {
-    await this.cache
-      .deletePattern(`orders:*`)
-      .catch(() => undefined);
+    await this.cache.deletePattern(`orders:*`).catch(() => undefined);
     await this.cache.delete(`order:${orderId}`).catch(() => undefined);
   }
 

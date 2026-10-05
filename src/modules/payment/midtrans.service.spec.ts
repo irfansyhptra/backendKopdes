@@ -2,136 +2,89 @@ import * as crypto from 'crypto';
 import { ServiceUnavailableException } from '@nestjs/common';
 import { MidtransService } from './midtrans.service';
 
-/**
- * Klien Midtrans.
- *
- * Yang dijaga: kunci tidak pernah bocor, lingkungan tidak pernah tertukar,
- * dan tanda tangan webhook diperiksa dengan benar.
- */
-
 const SANDBOX = {
   MIDTRANS_SERVER_KEY: 'SB-Mid-server-rahasia',
+  MIDTRANS_CLIENT_KEY: 'SB-Mid-client-publik',
   MIDTRANS_IS_PRODUCTION: 'false',
 };
 
 function build(config: Record<string, string> = SANDBOX) {
-  return new MidtransService({ get: (k: string) => config[k] } as never);
+  return new MidtransService({ get: (key: string) => config[key] } as never);
 }
 
 afterEach(() => {
-  // @ts-expect-error dikembalikan ke bawaan runtime
+  // @ts-expect-error mengembalikan fetch ke bawaan runtime pengujian
   delete global.fetch;
 });
 
-describe('lingkungan', () => {
-  it('kunci sandbox + IS_PRODUCTION=false menembak sandbox', () => {
-    const svc = build();
-    expect(svc.baseUrl).toBe(MidtransService.SANDBOX_URL);
-    expect(svc.isConfigured()).toBe(true);
+describe('Midtrans Snap Sandbox', () => {
+  it('selalu menyediakan skrip sandbox meskipun flag produksi aktif', () => {
+    const service = build({ ...SANDBOX, MIDTRANS_IS_PRODUCTION: 'true' });
+    expect(service.snapJsUrl).toBe(MidtransService.SNAP_JS_URL);
+    expect(service.snapJsUrl).toContain('app.sandbox.midtrans.com');
+    expect(service.publicClientKey).toBe(SANDBOX.MIDTRANS_CLIENT_KEY);
   });
 
-  it('awalan kunci yang tidak biasa hanya diperingatkan, tidak menolak', async () => {
-    // Awalan `SB-` kebiasaan Midtrans, bukan aturan: sebagian akun punya
-    // kunci Sandbox sah tanpa awalan itu. Menolaknya berarti mematikan
-    // pembayaran yang sebenarnya berfungsi.
-    const svc = build({
-      MIDTRANS_SERVER_KEY: 'Mid-server-tanpa-awalan',
-      MIDTRANS_IS_PRODUCTION: 'false',
-    });
-    expect(svc.suspiciousKeyPrefix()).toBe(true);
-    expect(svc.isConfigured()).toBe(true);
-
-    global.fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ status_code: '201', status_message: 'ok' }),
-    }) as never;
-    await expect(svc.charge({})).resolves.toMatchObject({ status_code: '201' });
-  });
-
-  it('awalan yang wajar tidak menimbulkan peringatan', () => {
-    expect(build().suspiciousKeyPrefix()).toBe(false);
-    expect(
-      build({
-        MIDTRANS_SERVER_KEY: 'Mid-server-produksi',
-        MIDTRANS_IS_PRODUCTION: 'true',
-      }).suspiciousKeyPrefix(),
-    ).toBe(false);
-  });
-
-  it('IS_PRODUCTION=true menembak endpoint produksi', () => {
-    // Yang benar-benar menentukan lingkungan adalah URL-nya, bukan awalan
-    // kunci; salah lingkungan dijawab 401 oleh Midtrans sendiri.
-    const svc = build({
-      MIDTRANS_SERVER_KEY: 'Mid-server-produksi',
-      MIDTRANS_IS_PRODUCTION: 'true',
-    });
-    expect(svc.baseUrl).toBe(MidtransService.PRODUCTION_URL);
-  });
-
-  it('tanpa kunci, pembayaran ditolak dengan kalimat yang bisa dipahami', async () => {
-    const svc = build({});
-    await expect(svc.charge({})).rejects.toThrow(/belum dikonfigurasi/i);
-  });
-});
-
-describe('permintaan', () => {
-  it('memakai Basic auth dan tidak mengirim kunci di badan', async () => {
+  it('membuat token lewat endpoint Snap sandbox dan Basic auth', async () => {
     const fetchMock = jest.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ status_code: '201', status_message: 'ok' }),
+      json: async () => ({
+        token: 'snap-token',
+        redirect_url: 'https://app.sandbox.midtrans.com/snap/v3/redirection/x',
+      }),
     });
     global.fetch = fetchMock as never;
 
-    await build().charge({ payment_type: 'qris' });
+    const payload = {
+      transaction_details: { order_id: 'KOMIT-1', gross_amount: 50000 },
+    };
+    await expect(build().createSnapTransaction(payload)).resolves.toMatchObject(
+      {
+        token: 'snap-token',
+      },
+    );
 
     const [url, init] = fetchMock.mock.calls[0];
-    expect(String(url)).toBe(`${MidtransService.SANDBOX_URL}/v2/charge`);
-    const auth = (init.headers as Record<string, string>).Authorization;
-    expect(auth.startsWith('Basic ')).toBe(true);
-    // Kunci hanya boleh ada di header auth, tidak di badan permintaan.
-    expect(String(init.body)).not.toContain('SB-Mid-server-rahasia');
+    expect(String(url)).toBe(MidtransService.SNAP_API_URL);
+    expect(String(url)).not.toContain('/v2/charge');
+    expect((init.headers as Record<string, string>).Authorization).toMatch(
+      /^Basic /,
+    );
+    expect(String(init.body)).not.toContain(SANDBOX.MIDTRANS_SERVER_KEY);
+    expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it('gateway tak terjangkau dijawab 503, bukan galat mentah', async () => {
-    global.fetch = jest.fn().mockRejectedValue(new Error('fetch failed')) as never;
-    await expect(build().charge({})).rejects.toBeInstanceOf(
+  it('menolak bila salah satu kunci sandbox belum tersedia', async () => {
+    const service = build({
+      MIDTRANS_SERVER_KEY: SANDBOX.MIDTRANS_SERVER_KEY,
+    });
+    await expect(service.createSnapTransaction({})).rejects.toThrow(
+      /belum dikonfigurasi/i,
+    );
+  });
+
+  it('gateway tidak terjangkau dijawab sebagai 503', async () => {
+    global.fetch = jest
+      .fn()
+      .mockRejectedValue(new Error('fetch failed')) as never;
+    await expect(build().createSnapTransaction({})).rejects.toBeInstanceOf(
       ServiceUnavailableException,
     );
   });
 
-  it('respons yang tidak bisa dibaca dijawab 503', async () => {
+  it('respons Snap tanpa token ditolak', async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: false,
-      json: async () => {
-        throw new Error('bukan json');
-      },
+      json: async () => ({ error_messages: ['invalid payload'] }),
     }) as never;
-    await expect(build().charge({})).rejects.toBeInstanceOf(
-      ServiceUnavailableException,
+    await expect(build().createSnapTransaction({})).rejects.toThrow(
+      /invalid payload/i,
     );
-  });
-
-  it('memakai batas waktu, bukan menunggu tanpa akhir', async () => {
-    const fetchMock = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ status_code: '201', status_message: 'ok' }),
-    });
-    global.fetch = fetchMock as never;
-    await build().status('KOMIT-1-2');
-    expect(fetchMock.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
   });
 });
 
 describe('verifySignature', () => {
-  const key = 'SB-Mid-server-rahasia';
-
-  function sign(orderId: string, statusCode: string, gross: string) {
-    return crypto
-      .createHash('sha512')
-      .update(`${orderId}${statusCode}${gross}${key}`)
-      .digest('hex');
-  }
-
+  const key = SANDBOX.MIDTRANS_SERVER_KEY;
   const base = {
     order_id: 'KOMIT-abc-1700000000',
     status_code: '200',
@@ -140,42 +93,40 @@ describe('verifySignature', () => {
     transaction_status: 'settlement',
   };
 
-  it('menerima tanda tangan yang benar', () => {
-    const svc = build();
+  const sign = (gross: string) =>
+    crypto
+      .createHash('sha512')
+      .update(`${base.order_id}${base.status_code}${gross}${key}`)
+      .digest('hex');
+
+  it('menerima tanda tangan benar dan menolak nominal yang diubah', () => {
+    const service = build();
     expect(
-      svc.verifySignature({
+      service.verifySignature({
         ...base,
-        signature_key: sign(base.order_id, base.status_code, base.gross_amount),
+        signature_key: sign(base.gross_amount),
       }),
     ).toBe(true);
-  });
-
-  it('menolak tanda tangan yang salah', () => {
-    const svc = build();
     expect(
-      svc.verifySignature({ ...base, signature_key: 'a'.repeat(128) }),
+      service.verifySignature({
+        ...base,
+        gross_amount: '1.00',
+        signature_key: sign(base.gross_amount),
+      }),
     ).toBe(false);
   });
 
-  it('menolak tanda tangan kosong atau panjangnya berbeda', () => {
-    const svc = build();
-    expect(svc.verifySignature({ ...base, signature_key: '' })).toBe(false);
-    expect(svc.verifySignature({ ...base, signature_key: 'pendek' })).toBe(false);
-  });
-
-  it('nominal yang diubah membuat tanda tangan tidak cocok', () => {
-    const svc = build();
-    const signature = sign(base.order_id, base.status_code, '50000.00');
-    // Penyerang yang menaikkan nominal tanpa kunci server tidak bisa
-    // menghitung ulang tanda tangannya.
+  it('menolak tanda tangan kosong, salah, atau tanpa server key', () => {
+    const service = build();
+    expect(service.verifySignature({ ...base, signature_key: '' })).toBe(false);
+    expect(service.verifySignature({ ...base, signature_key: 'pendek' })).toBe(
+      false,
+    );
     expect(
-      svc.verifySignature({ ...base, gross_amount: '1.00', signature_key: signature }),
-    ).toBe(false);
-  });
-
-  it('tanpa kunci server, tidak ada tanda tangan yang diterima', () => {
-    expect(
-      build({}).verifySignature({ ...base, signature_key: 'apa pun' }),
+      build({ MIDTRANS_CLIENT_KEY: 'client' }).verifySignature({
+        ...base,
+        signature_key: 'apa pun',
+      }),
     ).toBe(false);
   });
 });

@@ -16,7 +16,11 @@ describe('AuthService.changePassword', () => {
       refreshToken: { deleteMany: jest.fn() },
     };
     prisma.$transaction = jest.fn(async (cb: any) => cb(prisma));
-    service = new AuthService(prisma, { get: () => undefined } as any);
+    service = new AuthService(
+      prisma,
+      { get: () => undefined } as any,
+      { sendCustomerVerification: jest.fn() } as any,
+    );
     jest
       .spyOn(service as any, 'generateAuthResponse')
       .mockResolvedValue({ accessToken: 'baru' });
