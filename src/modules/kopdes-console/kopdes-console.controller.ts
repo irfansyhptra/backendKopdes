@@ -7,7 +7,10 @@ import {
   Query,
   Req,
   UseGuards,
+  UploadedFiles,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { Role } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -43,6 +46,28 @@ export class KopdesConsoleController {
     return {
       success: true,
       data: await this.console.updateProfile(req.user, dto),
+    };
+  }
+
+  @Put('profile/media')
+  @RequirePermissions(Permission.KOPDES_POLICY_MANAGE)
+  @UseInterceptors(
+    FileFieldsInterceptor([
+      { name: 'logo', maxCount: 1 },
+      { name: 'banner', maxCount: 1 },
+    ]),
+  )
+  async updateProfileMedia(
+    @Req() req: AuthenticatedRequest,
+    @UploadedFiles()
+    files?: {
+      logo?: Express.Multer.File[];
+      banner?: Express.Multer.File[];
+    },
+  ) {
+    return {
+      success: true,
+      data: await this.console.updateProfileMedia(req.user, files),
     };
   }
 

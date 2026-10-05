@@ -25,7 +25,7 @@ function build() {
     customerEmailVerification: { delete: jest.fn().mockResolvedValue({}) },
   };
   const prisma = {
-    user: { findUnique: jest.fn(), create: jest.fn() },
+    user: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
     customerEmailVerification: pending,
     refreshToken: { create: jest.fn().mockResolvedValue({}) },
     koperasi: { findUnique: jest.fn() },
@@ -37,12 +37,17 @@ function build() {
   const email = {
     sendCustomerVerification: jest.fn().mockResolvedValue(undefined),
   };
+  const storage = {
+    uploadFile: jest.fn(),
+    deleteFile: jest.fn().mockResolvedValue(undefined),
+  };
   const service = new AuthService(
     prisma as never,
     config as never,
     email as never,
+    storage as never,
   );
-  return { service, prisma, pending, tx, email };
+  return { service, prisma, pending, tx, email, storage };
 }
 
 function pendingRecord(overrides: Record<string, unknown> = {}) {
@@ -63,6 +68,36 @@ function pendingRecord(overrides: Record<string, unknown> = {}) {
 }
 
 describe('AuthService customer email verification', () => {
+  it('mengganti avatar lalu membersihkan foto lama setelah database tersimpan', async () => {
+    const { service, prisma, storage } = build();
+    prisma.user.findUnique.mockResolvedValue({
+      avatarUrl: 'https://old.test/a.jpg',
+    });
+    prisma.user.update.mockResolvedValue({
+      id: 'u1',
+      avatarUrl: 'https://new.test/a.jpg',
+      role: Role.CUSTOMER,
+      permissions: [],
+    });
+    storage.uploadFile.mockResolvedValue('https://new.test/a.jpg');
+
+    const result = await service.updateAvatar('u1', {
+      originalname: 'avatar.jpg',
+    } as Express.Multer.File);
+
+    expect(storage.uploadFile).toHaveBeenCalledWith(
+      expect.anything(),
+      'profiles/u1',
+    );
+    expect(prisma.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { avatarUrl: 'https://new.test/a.jpg' },
+      }),
+    );
+    expect(storage.deleteFile).toHaveBeenCalledWith('https://old.test/a.jpg');
+    expect(result.avatarUrl).toBe('https://new.test/a.jpg');
+  });
+
   it.each([Role.UMKM, Role.COURIER, Role.ADMIN_KOPDES, Role.SUPER_ADMIN])(
     'menolak pendaftaran mandiri sebagai %s',
     async (role) => {

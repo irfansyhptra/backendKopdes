@@ -14,7 +14,10 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { FilesInterceptor } from '@nestjs/platform-express';
+import {
+  FileFieldsInterceptor,
+  FilesInterceptor,
+} from '@nestjs/platform-express';
 import { SellerService } from './seller.service';
 import { CreateSellerProductDto } from './dto/create-seller-product.dto';
 import { UpdateSellerProductDto } from './dto/update-seller-product.dto';
@@ -45,6 +48,28 @@ export class SellerController {
   @Put('profile')
   async updateProfile(@Req() req: any, @Body() dto: UpdateSellerProfileDto) {
     const data = await this.sellerService.updateProfile(req.user.id, dto);
+    return { success: true, data };
+  }
+
+  @Put('profile/media')
+  @UseInterceptors(
+    FileFieldsInterceptor([
+      { name: 'logo', maxCount: 1 },
+      { name: 'banner', maxCount: 1 },
+    ]),
+  )
+  async updateProfileMedia(
+    @Req() req: any,
+    @UploadedFiles()
+    files?: {
+      logo?: Express.Multer.File[];
+      banner?: Express.Multer.File[];
+    },
+  ) {
+    const data = await this.sellerService.updateProfileMedia(
+      req.user.id,
+      files,
+    );
     return { success: true, data };
   }
 

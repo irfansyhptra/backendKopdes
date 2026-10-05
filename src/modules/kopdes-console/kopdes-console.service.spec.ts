@@ -11,6 +11,7 @@ const admin = {
 
 describe('KopdesConsoleService', () => {
   let prisma: any;
+  let storage: any;
   let service: KopdesConsoleService;
 
   beforeEach(() => {
@@ -46,7 +47,11 @@ describe('KopdesConsoleService', () => {
         })),
       },
     };
-    service = new KopdesConsoleService(prisma);
+    storage = {
+      uploadFile: jest.fn(),
+      deleteFile: jest.fn(),
+    };
+    service = new KopdesConsoleService(prisma, storage);
   });
 
   it('daftar produk: hanya Kopdes sendiri, menipis memakai minStock per produk', async () => {
@@ -88,6 +93,34 @@ describe('KopdesConsoleService', () => {
       open: '07:00',
       close: '17:00',
     });
+  });
+
+  it('menyimpan logo dan banner Kopdes pada kolom media publik', async () => {
+    prisma.koperasi.findUnique.mockResolvedValue({
+      id: 'k1',
+      logoUrl: 'https://old.test/logo.jpg',
+      imageUrl: null,
+      operatingHours: null,
+    });
+    storage.uploadFile
+      .mockResolvedValueOnce('https://new.test/logo.jpg')
+      .mockResolvedValueOnce('https://new.test/banner.jpg');
+
+    await service.updateProfileMedia(admin, {
+      logo: [{} as Express.Multer.File],
+      banner: [{} as Express.Multer.File],
+    });
+
+    expect(prisma.koperasi.update).toHaveBeenCalledWith({
+      where: { id: 'k1' },
+      data: {
+        logoUrl: 'https://new.test/logo.jpg',
+        imageUrl: 'https://new.test/banner.jpg',
+      },
+    });
+    expect(storage.deleteFile).toHaveBeenCalledWith(
+      'https://old.test/logo.jpg',
+    );
   });
 
   it('dasbor: "hari ini" dimulai tengah malam WIB, omzet hanya barang Kopdes', async () => {

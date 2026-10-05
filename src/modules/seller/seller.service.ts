@@ -51,6 +51,7 @@ const PROFILE_SELECT = {
   phone: true,
   category: true,
   photoUrl: true,
+  bannerUrl: true,
   operatingHours: true,
   status: true,
   rejectionReason: true,
@@ -361,6 +362,63 @@ export class SellerService {
 
     await this.invalidateCache(umkm.id);
 
+    return withOpenNow(updated);
+  }
+
+  async updateProfileMedia(
+    userId: string,
+    files?: {
+      logo?: Express.Multer.File[];
+      banner?: Express.Multer.File[];
+    },
+  ) {
+    const logo = files?.logo?.[0];
+    const banner = files?.banner?.[0];
+    if (!logo && !banner) {
+      throw new BadRequestException(
+        'Pilih logo atau banner toko terlebih dahulu.',
+      );
+    }
+
+    const umkm = await this.getUmkmByUserId(userId);
+    const uploaded: { logo?: string; banner?: string } = {};
+    const updated = await (async () => {
+      try {
+        if (logo) {
+          uploaded.logo = await this.storageService.uploadFile(
+            logo,
+            `stores/umkm/${umkm.id}/logo`,
+          );
+        }
+        if (banner) {
+          uploaded.banner = await this.storageService.uploadFile(
+            banner,
+            `stores/umkm/${umkm.id}/banner`,
+          );
+        }
+        return await this.prisma.uMKM.update({
+          where: { id: umkm.id },
+          data: {
+            photoUrl: uploaded.logo,
+            bannerUrl: uploaded.banner,
+          },
+          select: PROFILE_SELECT,
+        });
+      } catch (error) {
+        if (uploaded.logo) await this.storageService.deleteFile(uploaded.logo);
+        if (uploaded.banner)
+          await this.storageService.deleteFile(uploaded.banner);
+        throw error;
+      }
+    })();
+
+    await this.invalidateCache(umkm.id);
+    if (uploaded.logo && umkm.photoUrl) {
+      await this.storageService.deleteFile(umkm.photoUrl);
+    }
+    if (uploaded.banner && umkm.bannerUrl) {
+      await this.storageService.deleteFile(umkm.bannerUrl);
+    }
     return withOpenNow(updated);
   }
 

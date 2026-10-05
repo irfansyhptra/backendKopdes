@@ -13,6 +13,7 @@ import {
 } from '@prisma/client';
 import { OrderService } from '../order/order.service';
 import { PrismaService } from '../../database/prisma.service';
+import { StorageService } from '../../storage/storage.service';
 import type { AuthenticatedUser } from '../auth/authenticated-request';
 import {
   isOpenNow,
@@ -28,6 +29,7 @@ const PROFILE_SELECT = {
   name: true,
   description: true,
   logoUrl: true,
+  imageUrl: true,
   address: true,
   village: true,
   district: true,
@@ -53,7 +55,10 @@ const PRODUCT_INCLUDE = {
  */
 @Injectable()
 export class KopdesConsoleService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   /** Kopdes milik akun ini. Super Admin tidak terikat satu Kopdes. */
   private kopdesOf(user: AuthenticatedUser): string {
@@ -112,6 +117,62 @@ export class KopdesConsoleService {
         operatingHours,
       },
     });
+    return this.profile(user);
+  }
+
+  async updateProfileMedia(
+    user: AuthenticatedUser,
+    files?: {
+      logo?: Express.Multer.File[];
+      banner?: Express.Multer.File[];
+    },
+  ) {
+    const id = this.kopdesOf(user);
+    const logo = files?.logo?.[0];
+    const banner = files?.banner?.[0];
+    if (!logo && !banner) {
+      throw new BadRequestException(
+        'Pilih logo atau banner Kopdes terlebih dahulu.',
+      );
+    }
+    const current = await this.prisma.koperasi.findUnique({
+      where: { id },
+      select: { logoUrl: true, imageUrl: true },
+    });
+    if (!current) throw new NotFoundException('Kopdes tidak ditemukan');
+
+    const uploaded: { logo?: string; banner?: string } = {};
+    await (async () => {
+      try {
+        if (logo) {
+          uploaded.logo = await this.storage.uploadFile(
+            logo,
+            `stores/kopdes/${id}/logo`,
+          );
+        }
+        if (banner) {
+          uploaded.banner = await this.storage.uploadFile(
+            banner,
+            `stores/kopdes/${id}/banner`,
+          );
+        }
+        await this.prisma.koperasi.update({
+          where: { id },
+          data: { logoUrl: uploaded.logo, imageUrl: uploaded.banner },
+        });
+      } catch (error) {
+        if (uploaded.logo) await this.storage.deleteFile(uploaded.logo);
+        if (uploaded.banner) await this.storage.deleteFile(uploaded.banner);
+        throw error;
+      }
+    })();
+
+    if (uploaded.logo && current.logoUrl) {
+      await this.storage.deleteFile(current.logoUrl);
+    }
+    if (uploaded.banner && current.imageUrl) {
+      await this.storage.deleteFile(current.imageUrl);
+    }
     return this.profile(user);
   }
 

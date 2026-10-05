@@ -20,6 +20,7 @@ describe('AuthService.changePassword', () => {
       prisma,
       { get: () => undefined } as any,
       { sendCustomerVerification: jest.fn() } as any,
+      { uploadFile: jest.fn(), deleteFile: jest.fn() } as any,
     );
     jest
       .spyOn(service as any, 'generateAuthResponse')

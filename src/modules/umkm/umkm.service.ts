@@ -231,6 +231,7 @@ export class UmkmService {
         longitude: true,
         category: true,
         photoUrl: true,
+        bannerUrl: true,
         operatingHours: true,
         kopdesId: true,
       },

@@ -17,6 +17,7 @@ import { LoginDto } from './dto/login.dto';
 import { JwtHelper, PasswordHelper } from './helpers/crypto.helper';
 import { resolvePermissions } from '../../common/permissions';
 import { AuthEmailService } from './auth-email.service';
+import { StorageService } from '../../storage/storage.service';
 
 /**
  * Hanya pembeli yang boleh mendaftar sendiri.
@@ -49,6 +50,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     private readonly emailService: AuthEmailService,
+    private readonly storage: StorageService,
   ) {
     this.jwtSecret =
       this.configService.get<string>('JWT_SECRET') || 'default_jwt_secret';
@@ -435,6 +437,7 @@ export class AuthService {
         email: true,
         name: true,
         phone: true,
+        avatarUrl: true,
         role: true,
         kopdesId: true,
         permissions: true,
@@ -469,12 +472,66 @@ export class AuthService {
         email: true,
         name: true,
         phone: true,
+        avatarUrl: true,
         role: true,
+        kopdesId: true,
+        permissions: true,
+        kopdes: { select: { id: true, name: true, village: true } },
         createdAt: true,
         updatedAt: true,
       },
     });
-    return updated;
+    const { permissions, ...rest } = updated;
+    return {
+      ...rest,
+      permissions: resolvePermissions(updated.role, permissions),
+    };
+  }
+
+  async updateAvatar(userId: string, avatar?: Express.Multer.File) {
+    if (!avatar) {
+      throw new BadRequestException('Pilih foto profil terlebih dahulu.');
+    }
+    const current = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { avatarUrl: true },
+    });
+    if (!current) throw new NotFoundException('User not found');
+
+    const uploaded = await this.storage.uploadFile(
+      avatar,
+      `profiles/${userId}`,
+    );
+    try {
+      const updated = await this.prisma.user.update({
+        where: { id: userId },
+        data: { avatarUrl: uploaded },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          phone: true,
+          avatarUrl: true,
+          role: true,
+          kopdesId: true,
+          permissions: true,
+          kopdes: { select: { id: true, name: true, village: true } },
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+      if (current.avatarUrl && current.avatarUrl !== uploaded) {
+        await this.storage.deleteFile(current.avatarUrl);
+      }
+      const { permissions, ...rest } = updated;
+      return {
+        ...rest,
+        permissions: resolvePermissions(updated.role, permissions),
+      };
+    } catch (error) {
+      await this.storage.deleteFile(uploaded);
+      throw error;
+    }
   }
 
   private async generateAuthResponse(user: any) {
@@ -520,6 +577,7 @@ export class AuthService {
         email: user.email,
         name: user.name,
         phone: user.phone,
+        avatarUrl: user.avatarUrl ?? null,
         role: user.role,
         kopdesId: user.kopdesId ?? null,
         kopdes,

@@ -28,6 +28,7 @@ const CARD_SELECT = {
   address: true,
   phone: true,
   photoUrl: true,
+  bannerUrl: true,
   category: true,
   latitude: true,
   longitude: true,

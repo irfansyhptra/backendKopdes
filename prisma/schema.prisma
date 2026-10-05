@@ -280,12 +280,14 @@ model Koperasi {
 }
 
 model User {
-  id       String  @id @default(uuid())
-  email    String  @unique
-  password String
-  name     String
-  phone    String?
-  role     Role    @default(CUSTOMER)
+  id        String  @id @default(uuid())
+  email     String  @unique
+  password  String
+  name      String
+  phone     String?
+  /// Foto akun untuk seluruh peran. Berbeda dari logo/foto toko.
+  avatarUrl String?
+  role      Role    @default(CUSTOMER)
 
   /// Kopdes tempat staf (ADMIN_KOPDES / PEGAWAI_KOPDES) ditugaskan.
   /// Seluruh query operasional staf disaring dengan kolom ini — tanpa itu
@@ -731,6 +733,8 @@ model UMKM {
 
   category       UMKMCategory @default(LAINNYA)
   photoUrl       String?
+  /// Sampul lebar halaman toko. `photoUrl` tetap menjadi logo/foto toko.
+  bannerUrl      String?
   /// Bentuk sama dengan Koperasi.operatingHours.
   operatingHours Json?
 

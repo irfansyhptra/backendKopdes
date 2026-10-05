@@ -8,7 +8,10 @@ import {
   Request,
   HttpCode,
   HttpStatus,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
@@ -85,6 +88,18 @@ export class AuthController {
       name,
       phone,
     });
+    return { success: true, data };
+  }
+
+  /** Foto profil berlaku untuk seluruh peran pengguna. */
+  @UseGuards(JwtAuthGuard)
+  @Put('profile/avatar')
+  @UseInterceptors(FileInterceptor('avatar'))
+  async updateAvatar(
+    @Request() req: any,
+    @UploadedFile() avatar?: Express.Multer.File,
+  ) {
+    const data = await this.authService.updateAvatar(req.user.id, avatar);
     return { success: true, data };
   }
 
