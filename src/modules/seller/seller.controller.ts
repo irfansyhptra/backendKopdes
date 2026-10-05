@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Patch,
   Post,
   Put,
   Delete,
@@ -25,6 +26,7 @@ import { UpdateSellerProfileDto } from './dto/update-seller-profile.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { DecideCancellationDto } from '../order/dto/cancellation.dto';
 import { Role, OrderStatus } from '@prisma/client';
 
 @Controller('seller')
@@ -155,6 +157,35 @@ export class SellerController {
   async getOrderDetail(@Req() req: any, @Param('id') id: string) {
     const data = await this.sellerService.getOrderDetail(req.user.id, id);
     return { success: true, data };
+  }
+
+  /** Pengajuan pembatalan yang menunggu jawaban penjual. */
+  @Get('orders/cancellations')
+  async cancellations(@Req() req: any) {
+    const data = await this.sellerService.pendingCancellations(req.user.id);
+    return { success: true, data };
+  }
+
+  /** Menyetujui atau menolak pengajuan pembatalan pembeli. */
+  @Patch('orders/:id/cancellation')
+  async decideCancellation(
+    @Req() req: any,
+    @Param('id') id: string,
+    @Body() dto: DecideCancellationDto,
+  ) {
+    const data = await this.sellerService.decideCancellation(
+      req.user.id,
+      id,
+      dto.approve,
+      dto.reason,
+    );
+    return {
+      success: true,
+      message: dto.approve
+        ? 'Pembatalan disetujui; stok dikembalikan.'
+        : 'Pengajuan pembatalan ditolak.',
+      data,
+    };
   }
 
   @Put('orders/:id/status')

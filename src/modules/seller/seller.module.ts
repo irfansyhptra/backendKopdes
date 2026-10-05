@@ -4,9 +4,10 @@ import { SellerService } from './seller.service';
 import { DatabaseModule } from '../../database/database.module';
 import { CacheModule } from '../../cache/cache.module';
 import { StorageModule } from '../../storage/storage.module';
+import { OrderModule } from '../order/order.module';
 
 @Module({
-  imports: [DatabaseModule, CacheModule, StorageModule],
+  imports: [DatabaseModule, CacheModule, StorageModule, OrderModule],
   controllers: [SellerController],
   providers: [SellerService],
 })

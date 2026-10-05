@@ -9,6 +9,7 @@ import { handOverToCourier } from '../delivery/courier-handoff';
 import { PrismaService } from '../../database/prisma.service';
 import { CacheService } from '../../cache/cache.service';
 import { StorageService } from '../../storage/storage.service';
+import { OrderService } from '../order/order.service';
 import { CreateSellerProductDto } from './dto/create-seller-product.dto';
 import { UpdateSellerProductDto } from './dto/update-seller-product.dto';
 import { UpdateSellerProfileDto } from './dto/update-seller-profile.dto';
@@ -72,6 +73,7 @@ export class SellerService {
     private readonly prisma: PrismaService,
     private readonly cacheService: CacheService,
     private readonly storageService: StorageService,
+    private readonly orders: OrderService,
   ) {}
 
   // Helpers to get UMKM profile by user ID
@@ -882,6 +884,37 @@ export class SellerService {
     await this.invalidateCache(umkm.id);
 
     return updated;
+  }
+
+  // ── Pembatalan ───────────────────────────────────────────────
+
+  /** Pengajuan pembatalan atas pesanan yang memuat barang toko ini. */
+  async pendingCancellations(userId: string) {
+    const umkm = await this.getUmkmByUserId(userId);
+    return this.orders.pendingCancellations({ umkmId: umkm.id });
+  }
+
+  /**
+   * Penjual menyetujui atau menolak pengajuan pembatalan pembeli.
+   *
+   * Kepemilikan barang diperiksa di `OrderService.decideCancellation`:
+   * `umkmId` toko inilah yang menentukan pesanan mana yang boleh diputus.
+   */
+  async decideCancellation(
+    userId: string,
+    orderId: string,
+    approve: boolean,
+    reason?: string,
+  ) {
+    const umkm = await this.getUmkmByUserId(userId);
+    const result = await this.orders.decideCancellation(
+      { id: userId, umkmId: umkm.id },
+      orderId,
+      approve,
+      reason,
+    );
+    await this.invalidateCache(umkm.id);
+    return result;
   }
 
   // Get Sales Statistics for charts

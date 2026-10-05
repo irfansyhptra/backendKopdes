@@ -21,6 +21,7 @@ import { RequirePermissions } from '../auth/decorators/permissions.decorator';
 import { Permission } from '../../common/permissions';
 import { Role, OrderStatus } from '@prisma/client';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import { DecideCancellationDto } from './dto/cancellation.dto';
 
 // Pengelolaan pesanan sisi staf Kopdes (Admin & Pegawai).
 @Controller('admin/orders')
@@ -56,6 +57,44 @@ export class AdminOrderController {
       req.user.kopdesId ?? null,
     );
     return { success: true, data };
+  }
+
+  /** Pengajuan pembatalan yang menunggu jawaban pengurus. */
+  @Get('cancellations')
+  @RequirePermissions(Permission.ORDER_READ)
+  async cancellations(@Req() req: AuthenticatedRequest) {
+    const data = await this.orderService.pendingCancellations({
+      kopdesId: req.user.kopdesId ?? null,
+    });
+    return { success: true, data };
+  }
+
+  /**
+   * Menyetujui atau menolak pengajuan pembatalan.
+   *
+   * Dijaga izin pembatalan, bukan izin memproses: menyetujui berarti uang
+   * kembali dan stok kembali — keputusan admin, bukan pekerjaan meja.
+   */
+  @Patch(':id/cancellation')
+  @RequirePermissions(Permission.ORDER_CANCEL)
+  async decideCancellation(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: DecideCancellationDto,
+  ) {
+    const data = await this.orderService.decideCancellation(
+      { id: req.user.id, kopdesId: req.user.kopdesId ?? null },
+      id,
+      dto.approve,
+      dto.reason,
+    );
+    return {
+      success: true,
+      message: dto.approve
+        ? 'Pembatalan disetujui; stok dan pembayaran dikembalikan.'
+        : 'Pengajuan pembatalan ditolak.',
+      data,
+    };
   }
 
   @Patch(':id/status')

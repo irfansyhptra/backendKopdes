@@ -14,7 +14,7 @@ describe('SellerService.updateOrderStatus', () => {
     };
     prisma.$transaction = jest.fn(async (cb: any) => cb(prisma));
     const cache: any = { delete: jest.fn(), deletePattern: jest.fn() };
-    return { prisma, service: new SellerService(prisma, cache, {} as any) };
+    return { prisma, service: new SellerService(prisma, cache, {} as any, {} as any) };
   };
 
   it('penjual tidak bisa menandai pesanan selesai (saldo cair dari sini)', async () => {

@@ -11,7 +11,7 @@ describe('SellerService.getProfile', () => {
         })),
       },
     };
-    const service = new SellerService(prisma, {} as any, {} as any);
+    const service = new SellerService(prisma, {} as any, {} as any, {} as any);
     const res = await service.getProfile('user');
 
     const { select } = prisma.uMKM.findUnique.mock.calls[0][0];
@@ -47,7 +47,7 @@ describe('SellerService.getProfile', () => {
         .mockResolvedValueOnce('https://new.test/banner.jpg'),
       deleteFile: jest.fn(),
     };
-    const service = new SellerService(prisma, cache as any, storage as any);
+    const service = new SellerService(prisma, cache as any, storage as any, {} as any);
 
     const result = await service.updateProfileMedia('user-1', {
       logo: [{} as Express.Multer.File],

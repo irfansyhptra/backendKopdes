@@ -100,13 +100,16 @@ describe('OrderService — authorization', () => {
       ).rejects.toThrow(ForbiddenException);
     });
 
-    it('mengizinkan pemilik membatalkan pesanannya yang masih PENDING', async () => {
+    // Pembatalan sepihak oleh pemesan ditutup: ia mengajukan, toko yang
+    // memutuskan. Dua pintu ke pembatalan berarti satu di antaranya
+    // melewatkan persetujuan toko.
+    it('pemilik TIDAK bisa membatalkan sendiri; ia diarahkan mengajukan', async () => {
       prisma.order.findUnique.mockResolvedValue(order());
 
       await expect(
         service.updateStatus(OWNER, 'order-1', 'CANCELLED' as any, 'CUSTOMER'),
-      ).resolves.toBeDefined();
-      expect(prisma.$transaction).toHaveBeenCalled();
+      ).rejects.toThrow(/Ajukan pembatalan/i);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
     it.each(['ADMIN_KOPDES', 'PEGAWAI_KOPDES', 'SUPER_ADMIN'])(
@@ -323,11 +326,14 @@ describe('OrderService — authorization', () => {
 
     it('pesanan COD yang batal tidak menyentuh saldo', async () => {
       prisma.order.findUnique.mockResolvedValue(order({ status: 'PENDING' }));
+      prisma.order.findFirst.mockResolvedValue({ id: 'order-1' });
+      // Dibatalkan pengurus: COD belum pernah memotong saldo siapa pun.
       await service.updateStatus(
-        OWNER,
+        'admin-1',
         'order-1',
         'CANCELLED' as any,
-        'CUSTOMER',
+        'ADMIN_KOPDES',
+        'kop-1',
       );
       expect(wallet.refundOrder).not.toHaveBeenCalled();
     });

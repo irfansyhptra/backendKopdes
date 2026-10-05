@@ -849,11 +849,15 @@ export class OrderService {
           'You do not have permission to modify this order',
         );
       }
-      if (status !== 'CANCELLED' || order.status !== 'PENDING') {
-        throw new ForbiddenException(
-          'You may only cancel your own order while it is still pending',
-        );
-      }
+      // Pembatalan sepihak oleh pemesan ditutup: sekarang ia MENGAJUKAN
+      // lewat `requestCancellation`, dan pemilik barang yang memutuskan.
+      // Satu pintu saja — dua jalur ke pembatalan berarti satu di antaranya
+      // melewatkan persetujuan toko.
+      throw new ForbiddenException(
+        status === 'CANCELLED'
+          ? 'Ajukan pembatalan lewat halaman pesanan; toko yang menyetujuinya.'
+          : 'Anda tidak berhak mengubah status pesanan ini.',
+      );
     }
 
     // 2b. Staf desa hanya boleh menyentuh pesanan Kopdes tempatnya bertugas.
@@ -945,60 +949,8 @@ export class OrderService {
 
       // If CANCELLED, restore product stocks
       if (status === 'CANCELLED' && oldStatus !== 'CANCELLED') {
-        // Pesanan yang dibayar dari saldo: uangnya kembali ke saldo.
-        // Idempoten lewat kunci `refund:{orderId}` di buku dompet.
-        if (
-          order.paymentMethod === PaymentMethod.WALLET &&
-          order.paymentStatus === 'PAID'
-        ) {
-          await this.wallet.refundOrder(
-            tx,
-            order.customerId,
-            orderId,
-            order.totalAmount,
-            'Pengembalian pesanan dibatalkan',
-          );
-          await tx.payment.update({
-            where: { orderId },
-            data: { status: 'REFUNDED' },
-          });
-          await tx.order.update({
-            where: { id: orderId },
-            data: { paymentStatus: 'REFUNDED' },
-          });
-          updated.paymentStatus = 'REFUNDED';
-        }
-        for (const item of order.items) {
-          if (item.productId) {
-            const restoredProduct = await tx.product.update({
-              where: { id: item.productId },
-              data: { stock: { increment: item.quantity } },
-            });
-            await tx.inventoryTransaction.create({
-              data: {
-                productId: item.productId,
-                type: 'IN',
-                quantity: item.quantity,
-                stockAfter: restoredProduct.stock,
-                reason: `Order #${orderId} Cancelled (Stock Restored)`,
-              },
-            });
-          } else if (item.umkmProductId) {
-            const restored = await tx.uMKMProduct.update({
-              where: { id: item.umkmProductId },
-              data: { stock: { increment: item.quantity } },
-            });
-            await tx.inventoryTransaction.create({
-              data: {
-                umkmProductId: item.umkmProductId,
-                type: 'IN',
-                quantity: item.quantity,
-                stockAfter: restored.stock,
-                reason: `Order #${orderId} Cancelled (Stock Restored)`,
-              },
-            });
-          }
-        }
+        const { refunded } = await this.applyCancellation(tx, order);
+        if (refunded) updated.paymentStatus = 'REFUNDED';
       }
 
       // Penyerahan ke kumpulan tugas kurir terjadi saat barang ditandai
@@ -1041,6 +993,394 @@ export class OrderService {
     });
 
     return updatedOrder;
+  }
+
+  /**
+   * Efek membatalkan pesanan: uang kembali, stok kembali.
+   *
+   * Dipakai dua jalur — staf yang membatalkan langsung lewat `updateStatus`,
+   * dan persetujuan pengajuan pembatalan pemesan. Ditulis satu kali: dua
+   * salinan logika pengembalian uang adalah dua tempat untuk salah.
+   *
+   * Pemanggil yang mengubah status pesanan menjadi CANCELLED; di sini hanya
+   * akibatnya.
+   */
+  private async applyCancellation(
+    tx: Prisma.TransactionClient,
+    order: {
+      id: string;
+      customerId: string;
+      paymentMethod: PaymentMethod;
+      paymentStatus: PaymentStatus;
+      totalAmount: Prisma.Decimal;
+      items: {
+        productId: string | null;
+        umkmProductId: string | null;
+        quantity: number;
+      }[];
+    },
+  ): Promise<{ refunded: boolean }> {
+    let refunded = false;
+
+    // Pesanan yang dibayar dari saldo: uangnya kembali ke saldo.
+    // Idempoten lewat kunci `refund:{orderId}` di buku dompet.
+    if (
+      order.paymentMethod === PaymentMethod.WALLET &&
+      order.paymentStatus === 'PAID'
+    ) {
+      await this.wallet.refundOrder(
+        tx,
+        order.customerId,
+        order.id,
+        order.totalAmount,
+        'Pengembalian pesanan dibatalkan',
+      );
+      await tx.payment.update({
+        where: { orderId: order.id },
+        data: { status: 'REFUNDED' },
+      });
+      await tx.order.update({
+        where: { id: order.id },
+        data: { paymentStatus: 'REFUNDED' },
+      });
+      refunded = true;
+    }
+
+    for (const item of order.items) {
+      if (item.productId) {
+        const restored = await tx.product.update({
+          where: { id: item.productId },
+          data: { stock: { increment: item.quantity } },
+        });
+        await tx.inventoryTransaction.create({
+          data: {
+            productId: item.productId,
+            type: 'IN',
+            quantity: item.quantity,
+            stockAfter: restored.stock,
+            reason: `Order #${order.id} Cancelled (Stock Restored)`,
+          },
+        });
+      } else if (item.umkmProductId) {
+        const restored = await tx.uMKMProduct.update({
+          where: { id: item.umkmProductId },
+          data: { stock: { increment: item.quantity } },
+        });
+        await tx.inventoryTransaction.create({
+          data: {
+            umkmProductId: item.umkmProductId,
+            type: 'IN',
+            quantity: item.quantity,
+            stockAfter: restored.stock,
+            reason: `Order #${order.id} Cancelled (Stock Restored)`,
+          },
+        });
+      }
+    }
+
+    return { refunded };
+  }
+
+  // ── Pembatalan ───────────────────────────────────────────────
+
+  /** Status pengajuan, diturunkan dari ketiga kolom di `Order`. */
+  private static cancellationState(o: {
+    status: OrderStatus;
+    cancelRequestedAt: Date | null;
+    cancelDecidedAt: Date | null;
+  }): 'NONE' | 'REQUESTED' | 'APPROVED' | 'REJECTED' {
+    if (!o.cancelRequestedAt) return 'NONE';
+    if (!o.cancelDecidedAt) return 'REQUESTED';
+    return o.status === OrderStatus.CANCELLED ? 'APPROVED' : 'REJECTED';
+  }
+
+  /**
+   * Pemesan mengajukan pembatalan.
+   *
+   * Hanya selama toko belum mulai menyiapkan pesanannya. Setelah barang
+   * diambil dari rak dan dibungkus, membatalkan berarti membongkar kembali
+   * pekerjaan yang sudah terlanjur dilakukan — itu urusan yang diselesaikan
+   * dengan bicara, bukan dengan tombol.
+   */
+  async requestCancellation(userId: string, orderId: string, reason: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: {
+        id: true,
+        customerId: true,
+        status: true,
+        cancelRequestedAt: true,
+        cancelDecidedAt: true,
+      },
+    });
+    if (!order || order.customerId !== userId) {
+      throw new NotFoundException('Pesanan tidak ditemukan');
+    }
+    if (order.status === OrderStatus.CANCELLED) {
+      throw new BadRequestException('Pesanan ini sudah dibatalkan.');
+    }
+    if (
+      order.status !== OrderStatus.PENDING &&
+      order.status !== OrderStatus.PAID
+    ) {
+      throw new BadRequestException(
+        'Pesanan sudah mulai disiapkan toko, jadi tidak bisa dibatalkan lewat aplikasi. Hubungi tokonya.',
+      );
+    }
+    if (order.cancelRequestedAt && !order.cancelDecidedAt) {
+      throw new BadRequestException(
+        'Pengajuan pembatalan Anda masih menunggu jawaban toko.',
+      );
+    }
+
+    const updated = await this.prisma.order.update({
+      where: { id: orderId },
+      data: {
+        cancelRequestedAt: new Date(),
+        cancelReason: reason,
+        // Pengajuan baru setelah penolakan: keputusan lama dibersihkan.
+        cancelDecidedAt: null,
+        cancelDecidedById: null,
+        cancelRejectReason: null,
+      },
+      select: {
+        id: true,
+        status: true,
+        cancelRequestedAt: true,
+        cancelReason: true,
+        cancelDecidedAt: true,
+        cancelRejectReason: true,
+      },
+    });
+
+    await this.cache.delete(this.getDetailCacheKey(orderId));
+    await this.invalidateHistory(userId);
+    await this.prisma.auditLog.create({
+      data: {
+        userId,
+        action: 'ORDER_CANCEL_REQUESTED',
+        details: `Order ${orderId}: ${reason}`,
+      },
+    });
+
+    return {
+      ...updated,
+      cancellation: OrderService.cancellationState(updated),
+    };
+  }
+
+  /**
+   * Siapa yang berhak memutuskan pengajuan: pemilik barangnya.
+   *
+   * Pesanan campuran — ada barang Kopdes dan barang mitra — boleh diputus
+   * oleh salah satu pemiliknya, karena pesanan dibatalkan sebagai satu
+   * kesatuan dan tidak bisa dibatalkan separuh.
+   */
+  private static ownerScope(actor: {
+    kopdesId?: string | null;
+    umkmId?: string | null;
+  }): Prisma.OrderWhereInput {
+    const or: Prisma.OrderItemWhereInput[] = [];
+    if (actor.kopdesId) or.push({ product: { kopdesId: actor.kopdesId } });
+    if (actor.umkmId) or.push({ umkmProduct: { umkmId: actor.umkmId } });
+    if (or.length === 0) return { id: '__tidak_ada__' };
+    return { items: { some: { OR: or } } };
+  }
+
+  /**
+   * Toko menyetujui atau menolak pengajuan pembatalan.
+   *
+   * Menyetujui menjalankan akibat yang sama dengan pembatalan oleh staf:
+   * stok kembali, pembayaran saldo dikembalikan.
+   */
+  async decideCancellation(
+    actor: { id: string; kopdesId?: string | null; umkmId?: string | null },
+    orderId: string,
+    approve: boolean,
+    rejectReason?: string,
+  ) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, ...OrderService.ownerScope(actor) },
+      select: {
+        id: true,
+        customerId: true,
+        status: true,
+        paymentMethod: true,
+        paymentStatus: true,
+        totalAmount: true,
+        cancelRequestedAt: true,
+        cancelDecidedAt: true,
+        items: {
+          select: { productId: true, umkmProductId: true, quantity: true },
+        },
+      },
+    });
+    if (!order) {
+      throw new NotFoundException('Pesanan ini tidak memuat barang milik Anda');
+    }
+    if (!order.cancelRequestedAt || order.cancelDecidedAt) {
+      throw new BadRequestException(
+        'Tidak ada pengajuan pembatalan yang menunggu jawaban pada pesanan ini.',
+      );
+    }
+    if (!approve && !rejectReason?.trim()) {
+      throw new BadRequestException('Sebutkan alasan penolakannya.');
+    }
+
+    const now = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      await tx.order.update({
+        where: { id: orderId },
+        data: {
+          cancelDecidedAt: now,
+          cancelDecidedById: actor.id,
+          ...(approve
+            ? { status: OrderStatus.CANCELLED }
+            : { cancelRejectReason: rejectReason!.trim() }),
+        },
+      });
+      if (approve) await this.applyCancellation(tx, order);
+    });
+
+    await this.cache.delete(this.getDetailCacheKey(orderId));
+    await this.invalidateHistory(order.customerId);
+    await this.prisma.auditLog.create({
+      data: {
+        userId: actor.id,
+        action: approve ? 'ORDER_CANCEL_APPROVED' : 'ORDER_CANCEL_REJECTED',
+        details: `Order ${orderId}${approve ? '' : `: ${rejectReason!.trim()}`}`,
+      },
+    });
+
+    // Ringkasan keputusan, bukan detail pesanan pemesan: yang memutuskan
+    // adalah toko, dan ia tidak perlu salinan isi pesanan untuk itu.
+    return {
+      id: orderId,
+      status: approve ? OrderStatus.CANCELLED : order.status,
+      cancellation: approve ? 'APPROVED' : 'REJECTED',
+      decidedAt: now,
+    };
+  }
+
+  /** Pengajuan yang masih menunggu jawaban pemilik barang. */
+  async pendingCancellations(actor: {
+    kopdesId?: string | null;
+    umkmId?: string | null;
+  }) {
+    const rows = await this.prisma.order.findMany({
+      where: {
+        ...OrderService.ownerScope(actor),
+        cancelRequestedAt: { not: null },
+        cancelDecidedAt: null,
+      },
+      select: {
+        id: true,
+        status: true,
+        totalAmount: true,
+        createdAt: true,
+        cancelRequestedAt: true,
+        cancelReason: true,
+        customer: { select: { name: true } },
+        items: {
+          select: {
+            quantity: true,
+            product: { select: { name: true } },
+            umkmProduct: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: { cancelRequestedAt: 'asc' },
+      take: 100,
+    });
+
+    return rows.map((o) => ({
+      id: o.id,
+      status: o.status,
+      totalAmount: Number(o.totalAmount),
+      createdAt: o.createdAt,
+      requestedAt: o.cancelRequestedAt,
+      reason: o.cancelReason,
+      customerName: o.customer.name,
+      items: o.items.map((i) => ({
+        name: i.product?.name ?? i.umkmProduct?.name ?? 'Barang',
+        quantity: i.quantity,
+      })),
+    }));
+  }
+
+  /**
+   * Halaman "Pesanan Dibatalkan" milik pemesan.
+   *
+   * Memuat tiga keadaan sekaligus: yang sedang diajukan, yang ditolak, dan
+   * yang benar-benar batal — termasuk yang dibatalkan toko tanpa pengajuan.
+   * Memisahkannya jadi tiga daftar hanya memaksa orang menebak harus
+   * membuka yang mana.
+   */
+  async listCancellations(userId: string, page = 1, limit = 20) {
+    const take = Math.min(Math.max(limit, 1), 100);
+    const skip = (Math.max(page, 1) - 1) * take;
+    const where: Prisma.OrderWhereInput = {
+      customerId: userId,
+      OR: [
+        { cancelRequestedAt: { not: null } },
+        { status: OrderStatus.CANCELLED },
+      ],
+    };
+
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.order.findMany({
+        where,
+        select: {
+          id: true,
+          status: true,
+          paymentMethod: true,
+          paymentStatus: true,
+          totalAmount: true,
+          createdAt: true,
+          cancelRequestedAt: true,
+          cancelReason: true,
+          cancelDecidedAt: true,
+          cancelRejectReason: true,
+          items: {
+            select: {
+              quantity: true,
+              product: { select: { name: true } },
+              umkmProduct: { select: { name: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take,
+      }),
+      this.prisma.order.count({ where }),
+    ]);
+
+    return {
+      orders: rows.map((o) => ({
+        id: o.id,
+        status: o.status,
+        paymentMethod: o.paymentMethod,
+        paymentStatus: o.paymentStatus,
+        totalAmount: Number(o.totalAmount),
+        createdAt: o.createdAt,
+        requestedAt: o.cancelRequestedAt,
+        reason: o.cancelReason,
+        decidedAt: o.cancelDecidedAt,
+        rejectReason: o.cancelRejectReason,
+        cancellation: OrderService.cancellationState(o),
+        items: o.items.map((i) => ({
+          name: i.product?.name ?? i.umkmProduct?.name ?? 'Barang',
+          quantity: i.quantity,
+        })),
+      })),
+      meta: {
+        total,
+        page: Math.max(page, 1),
+        limit: take,
+        totalPages: Math.max(1, Math.ceil(total / take)),
+      },
+    };
   }
 
   async getTimeline(userId: string, orderId: string, role: string) {

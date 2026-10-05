@@ -15,6 +15,10 @@ import { OrderService } from './order.service';
 import { CheckoutDto } from './dto/checkout.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import {
+  CancellationListQueryDto,
+  RequestCancellationDto,
+} from './dto/cancellation.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('orders')
@@ -49,6 +53,41 @@ export class OrderController {
       limit,
     );
     return { success: true, orders, meta };
+  }
+
+  /**
+   * Daftar pembatalan milik pemesan: diajukan, ditolak, dan yang batal.
+   *
+   * Didaftarkan SEBELUM `:id` agar "cancellations" tidak tertangkap sebagai
+   * id pesanan.
+   */
+  @Get('cancellations')
+  async cancellations(@Req() req: any, @Query() q: CancellationListQueryDto) {
+    const data = await this.orderService.listCancellations(
+      req.user.id,
+      q.page,
+      q.limit,
+    );
+    return { success: true, ...data };
+  }
+
+  /** Mengajukan pembatalan; toko yang menyetujuinya. */
+  @Post(':id/cancellation')
+  async requestCancellation(
+    @Req() req: any,
+    @Param('id') orderId: string,
+    @Body() dto: RequestCancellationDto,
+  ) {
+    const data = await this.orderService.requestCancellation(
+      req.user.id,
+      orderId,
+      dto.reason,
+    );
+    return {
+      success: true,
+      message: 'Pengajuan pembatalan dikirim ke toko.',
+      data,
+    };
   }
 
   @Get(':id')

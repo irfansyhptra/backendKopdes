@@ -527,13 +527,29 @@ model Order {
   fulfillment       FulfillmentMethod @default(DELIVERY)
   deliveryAddressId String
   deliveryAddress   Address           @relation(fields: [deliveryAddressId], references: [id])
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
+
+  /// Pengajuan pembatalan oleh pemesan.
+  ///
+  /// Pembatalan bukan tombol sepihak: pemesan mengajukan, pemilik barang
+  /// yang memutuskan. Keadaannya dibaca dari ketiga kolom ini, bukan dari
+  /// enum tersendiri — diajukan bila `cancelRequestedAt` terisi dan
+  /// `cancelDecidedAt` masih kosong; disetujui bila sudah diputus dan
+  /// statusnya CANCELLED; ditolak bila sudah diputus tetapi tidak.
+  cancelRequestedAt  DateTime?
+  cancelReason       String?
+  cancelDecidedAt    DateTime?
+  cancelDecidedById  String?
+  cancelRejectReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   items    OrderItem[]
   payment  Payment?
   invoice  Invoice?
   delivery Delivery?
+
+  @@index([cancelRequestedAt, cancelDecidedAt])
 }
 
 model OrderItem {

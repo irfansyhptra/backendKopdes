@@ -30,7 +30,7 @@ describe('SellerService daftar produk', () => {
       },
     };
     cache = { get: jest.fn(async () => null), set: jest.fn() };
-    service = new SellerService(prisma, cache, {} as any);
+    service = new SellerService(prisma, cache, {} as any, {} as any);
   });
 
   it('filter "low" memakai rentang 1..ambang, ringkasan tidak ikut terfilter', async () => {
