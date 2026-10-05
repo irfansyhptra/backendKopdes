@@ -10,6 +10,7 @@ describe('OrderService — authorization', () => {
   let cache: any;
   let service: OrderService;
   let wallet: any;
+  let tx: any;
 
   const order = (overrides: any = {}) => ({
     id: 'order-1',
@@ -21,8 +22,26 @@ describe('OrderService — authorization', () => {
   });
 
   beforeEach(() => {
-    const tx = {
-      order: { update: jest.fn(async (a: any) => ({ id: a.where.id })) },
+    tx = {
+      order: {
+        update: jest.fn(async (a: any) => ({ id: a.where.id, ...a.data })),
+        // Pesanan antar milik Kopdes kop-1, belum punya pengantaran.
+        findUnique: jest.fn(async () => ({
+          fulfillment: 'DELIVERY',
+          delivery: null,
+          items: [{ product: { kopdesId: 'kop-1' }, umkmProduct: null }],
+        })),
+      },
+      user: {
+        findMany: jest.fn(async () => [
+          { id: 'kurir-sibuk', _count: { deliveries: 3 } },
+          { id: 'kurir-luang', _count: { deliveries: 0 } },
+        ]),
+      },
+      delivery: {
+        upsert: jest.fn(async () => ({})),
+        findUnique: jest.fn(async () => ({ courierId: 'kurir-luang' })),
+      },
       payment: { update: jest.fn(), updateMany: jest.fn() },
       product: { update: jest.fn() },
       uMKMProduct: { update: jest.fn() },
@@ -161,6 +180,86 @@ describe('OrderService — authorization', () => {
         ),
       ).resolves.toBeDefined();
       expect(prisma.$transaction).toHaveBeenCalled();
+    });
+
+    it('COD diantar: "Proses" langsung menyerahkan ke kurir paling luang', async () => {
+      prisma.order.findUnique.mockResolvedValue(order({ status: 'PENDING' }));
+      prisma.order.findFirst.mockResolvedValue({ id: 'order-1' });
+
+      const res = await service.updateStatus(
+        'admin-1',
+        'order-1',
+        'PROCESSING' as any,
+        'ADMIN_KOPDES',
+        'kop-1',
+      );
+
+      expect(tx.user.findMany.mock.calls[0][0].where).toEqual({
+        role: 'COURIER',
+        kopdesId: 'kop-1',
+      });
+      expect(tx.delivery.upsert.mock.calls[0][0].create).toMatchObject({
+        orderId: 'order-1',
+        courierId: 'kurir-luang',
+        status: 'ASSIGNED',
+      });
+      expect(res.status).toBe('OUT_FOR_DELIVERY');
+    });
+
+    it('COD tanpa kurir di Kopdes: menunggu di Siap Dikirim', async () => {
+      prisma.order.findUnique.mockResolvedValue(order({ status: 'PENDING' }));
+      prisma.order.findFirst.mockResolvedValue({ id: 'order-1' });
+      tx.user.findMany.mockResolvedValue([]);
+
+      const res = await service.updateStatus(
+        'admin-1',
+        'order-1',
+        'PROCESSING' as any,
+        'ADMIN_KOPDES',
+        'kop-1',
+      );
+
+      expect(tx.delivery.upsert.mock.calls[0][0].create.courierId).toBeNull();
+      expect(res.status).toBe('READY_FOR_DELIVERY');
+    });
+
+    it('bayar di muka: "Proses" tidak menyerahkan ke kurir', async () => {
+      prisma.order.findUnique.mockResolvedValue(
+        order({ status: 'PAID', paymentMethod: 'QRIS' }),
+      );
+      prisma.order.findFirst.mockResolvedValue({ id: 'order-1' });
+
+      const res = await service.updateStatus(
+        'admin-1',
+        'order-1',
+        'PROCESSING' as any,
+        'ADMIN_KOPDES',
+        'kop-1',
+      );
+
+      expect(tx.delivery.upsert).not.toHaveBeenCalled();
+      expect(res.status).toBe('PROCESSING');
+    });
+
+    it('ambil sendiri: tidak ada kurir', async () => {
+      prisma.order.findUnique.mockResolvedValue(order({ status: 'PENDING' }));
+      prisma.order.findFirst.mockResolvedValue({ id: 'order-1' });
+      tx.order.findUnique.mockResolvedValue({
+        fulfillment: 'PICKUP',
+        delivery: null,
+        items: [],
+      });
+
+      const res = await service.updateStatus(
+        'admin-1',
+        'order-1',
+        'PROCESSING' as any,
+        'ADMIN_KOPDES',
+        'kop-1',
+      );
+
+      expect(tx.delivery.upsert).not.toHaveBeenCalled();
+      expect(res.status).toBe('PROCESSING');
     });
   });
 

@@ -167,6 +167,12 @@ export class DeliveryService {
       },
     });
 
+    // Pesanan yang menunggu kurir kini berangkat bersama kurirnya.
+    await this.prisma.order.updateMany({
+      where: { id: delivery.orderId, status: 'READY_FOR_DELIVERY' },
+      data: { status: 'OUT_FOR_DELIVERY' },
+    });
+
     await this.writeAudit(actor?.id, 'DELIVERY_ASSIGN', {
       deliveryId,
       before: { courierId: delivery.courierId, status: delivery.status },
@@ -214,6 +220,12 @@ export class DeliveryService {
           },
         },
       },
+    });
+
+    // Barang belum diambil: pesanan kembali menunggu kurir.
+    await this.prisma.order.updateMany({
+      where: { id: delivery.orderId, status: 'OUT_FOR_DELIVERY' },
+      data: { status: 'READY_FOR_DELIVERY' },
     });
 
     await this.writeAudit(actor?.id, 'DELIVERY_UNASSIGN', {

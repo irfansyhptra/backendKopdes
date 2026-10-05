@@ -8,8 +8,11 @@ describe('SellerService.updateOrderStatus', () => {
       order: {
         findFirst: jest.fn(async () => ({ id: 'o1', status })),
         update: jest.fn(async ({ data }: any) => ({ id: 'o1', ...data })),
+        // Ambil sendiri: tidak ada yang diserahkan ke kurir.
+        findUnique: jest.fn(async () => ({ fulfillment: 'PICKUP' })),
       },
     };
+    prisma.$transaction = jest.fn(async (cb: any) => cb(prisma));
     const cache: any = { delete: jest.fn(), deletePattern: jest.fn() };
     return { prisma, service: new SellerService(prisma, cache, {} as any) };
   };

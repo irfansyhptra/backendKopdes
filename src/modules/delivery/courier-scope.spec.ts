@@ -20,9 +20,13 @@ function build() {
       update: jest.fn().mockResolvedValue({ id: 'd1' }),
     },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
+    order: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
   };
   const svc = Object.create(DeliveryService.prototype) as DeliveryService;
-  Object.assign(svc, { prisma, cache: { deletePattern: jest.fn(), delete: jest.fn() } });
+  Object.assign(svc, {
+    prisma,
+    cache: { deletePattern: jest.fn(), delete: jest.fn() },
+  });
   return { svc, prisma };
 }
 

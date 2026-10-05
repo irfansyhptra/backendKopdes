@@ -18,6 +18,7 @@ import {
   Prisma,
 } from '@prisma/client';
 import { ALLOWED_ORDER_TRANSITIONS, canTransition } from './order-transitions';
+import { handOverToCourier } from '../delivery/courier-handoff';
 import {
   composeOrderTotals,
   resolveDiscount,
@@ -1003,8 +1004,27 @@ export class OrderService {
         }
       }
 
+      // Penyerahan ke kurir. COD yang diantar tidak menunggu pembayaran apa
+      // pun, jadi "Proses" langsung meneruskannya ke kurir — pengurus tidak
+      // perlu lagi menandai "Siap Dikirim" lalu menugaskan kurir sendiri.
+      // Pesanan lain diserahkan saat ditandai siap dikirim.
+      const handOver =
+        status === OrderStatus.READY_FOR_DELIVERY ||
+        (status === OrderStatus.PROCESSING &&
+          order.paymentMethod === PaymentMethod.COD);
+      if (handOver) {
+        const next = await handOverToCourier(tx, orderId);
+        if (next) {
+          updated.status = next;
+          updated.delivery = await tx.delivery.findUnique({
+            where: { orderId },
+          });
+        }
+      }
+
       return updated;
     });
+    const finalStatus = updatedOrder.status;
 
     // Invalidate Caches
     await this.cache.delete(this.getDetailCacheKey(orderId));
@@ -1015,7 +1035,10 @@ export class OrderService {
       data: {
         userId,
         action: 'ORDER_STATUS_UPDATED',
-        details: `Updated order ${orderId} status from ${oldStatus} to ${status}`,
+        details:
+          finalStatus === status
+            ? `Updated order ${orderId} status from ${oldStatus} to ${status}`
+            : `Updated order ${orderId} status from ${oldStatus} to ${status}, handed to courier as ${finalStatus}`,
       },
     });
 

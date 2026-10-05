@@ -5,6 +5,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { canTransition } from '../order/order-transitions';
+import { handOverToCourier } from '../delivery/courier-handoff';
 import { PrismaService } from '../../database/prisma.service';
 import { CacheService } from '../../cache/cache.service';
 import { StorageService } from '../../storage/storage.service';
@@ -808,9 +809,16 @@ export class SellerService {
       );
     }
 
-    const updated = await this.prisma.order.update({
-      where: { id: orderId },
-      data: { status },
+    // "Siap Diantar" dari penjual = diserahkan ke kurir Kopdes.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.order.update({
+        where: { id: orderId },
+        data: { status },
+      });
+      if (status === OrderStatus.READY_FOR_DELIVERY) {
+        row.status = (await handOverToCourier(tx, orderId)) ?? row.status;
+      }
+      return row;
     });
 
     await this.invalidateCache(umkm.id);
