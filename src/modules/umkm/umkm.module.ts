@@ -5,11 +5,12 @@ import { CacheModule } from '../../cache/cache.module';
 import { UmkmController } from './umkm.controller';
 import { UmkmService } from './umkm.service';
 import { MitraController } from './mitra.controller';
+import { UmkmApplicationController } from './umkm-application.controller';
 import { MitraService } from './mitra.service';
 
 @Module({
   imports: [DatabaseModule, CacheModule, ConfigModule],
-  controllers: [UmkmController, MitraController],
+  controllers: [UmkmController, MitraController, UmkmApplicationController],
   providers: [UmkmService, MitraService],
   exports: [UmkmService, MitraService],
 })

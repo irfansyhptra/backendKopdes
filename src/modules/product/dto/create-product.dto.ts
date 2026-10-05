@@ -28,10 +28,11 @@ export class CreateProductDto {
   @MaxLength(150)
   name!: string;
 
+  /** Opsional, sama dengan produk UMKM: kosong lebih baik daripada ditolak. */
   @IsString()
-  @IsNotEmpty()
+  @IsOptional()
   @MaxLength(2000)
-  description!: string;
+  description?: string;
 
   @Type(() => Number)
   @IsNumber()

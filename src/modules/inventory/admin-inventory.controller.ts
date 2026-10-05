@@ -22,6 +22,7 @@ import {
   AdjustStockDto,
   ListTransactionsQueryDto,
   StockOpnameDto,
+  LiveFeedQueryDto,
 } from './dto/inventory.dto';
 
 // Pengelolaan stok sisi Kopdes. Staf boleh menyentuh stok Kopdes maupun mitra
@@ -55,6 +56,37 @@ export class AdminInventoryController {
       limit,
     );
     return { success: true, ...data };
+  }
+
+  /**
+   * Pergerakan stok barang Kopdes untuk baris "Aktivitas stok" — bentuknya
+   * sama dengan `GET /seller/inventory/live`.
+   */
+  @Get('live')
+  @RequirePermissions(Permission.INVENTORY_READ)
+  async live(
+    @Req() req: AuthenticatedRequest,
+    @Query() query: LiveFeedQueryDto,
+  ) {
+    const kopdesId = this.scope(req);
+    if (!kopdesId) {
+      return {
+        success: true,
+        data: {
+          serverTime: new Date().toISOString(),
+          hasMore: false,
+          movements: [],
+        },
+      };
+    }
+    const data = await this.inventoryService.liveFeed(
+      null,
+      kopdesId,
+      query.since,
+      query.limit,
+      true,
+    );
+    return { success: true, data };
   }
 
   @Get('transactions')

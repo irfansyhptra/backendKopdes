@@ -30,6 +30,7 @@ import { PaymentModule } from './modules/payment/payment.module';
 import { WalletModule } from './modules/wallet/wallet.module';
 import { ReviewModule } from './modules/review/review.module';
 import { PayoutModule } from './modules/payout/payout.module';
+import { KopdesConsoleModule } from './modules/kopdes-console/kopdes-console.module';
 
 @Module({
   imports: [
@@ -64,6 +65,7 @@ import { PayoutModule } from './modules/payout/payout.module';
     WalletModule,
     ReviewModule,
     PayoutModule,
+    KopdesConsoleModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -406,20 +406,24 @@ export class InventoryService {
     kopdesId: string | null,
     since?: string,
     limit = 50,
+    /** Hanya barang milik Kopdes, tanpa barang mitra UMKM-nya. */
+    kopdesOwnOnly = false,
   ) {
     const take = Math.min(Math.max(limit, 1), 200);
     const serverTime = new Date();
 
     const scope: Prisma.InventoryTransactionWhereInput = umkmId
       ? { umkmProduct: { umkmId } }
-      : kopdesId
-        ? {
-            OR: [
-              { product: { kopdesId } },
-              { umkmProduct: { umkm: { kopdesId } } },
-            ],
-          }
-        : {};
+      : kopdesId && kopdesOwnOnly
+        ? { product: { kopdesId } }
+        : kopdesId
+          ? {
+              OR: [
+                { product: { kopdesId } },
+                { umkmProduct: { umkm: { kopdesId } } },
+              ],
+            }
+          : {};
 
     const where: Prisma.InventoryTransactionWhereInput = since
       ? { ...scope, createdAt: { gt: new Date(since) } }

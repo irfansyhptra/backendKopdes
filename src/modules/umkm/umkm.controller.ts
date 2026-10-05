@@ -6,7 +6,9 @@ import {
   Query,
   Body,
   UseGuards,
+  Req,
 } from '@nestjs/common';
+import type { AuthenticatedRequest } from '../auth/authenticated-request';
 import { UmkmService } from './umkm.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -25,6 +27,9 @@ import {
 
 // Pegawai boleh melihat daftar mitra, tetapi keputusan atas mitra —
 // verifikasi, takedown produk, penetapan lokasi — tetap milik Admin Kopdes.
+/** Kopdes pengurus; null = Super Admin (seluruh desa). */
+const scope = (req: AuthenticatedRequest) => req.user.kopdesId ?? null;
+
 @Controller('admin/umkm')
 @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
 @Roles(Role.ADMIN_KOPDES, Role.PEGAWAI_KOPDES, Role.SUPER_ADMIN)
@@ -34,8 +39,11 @@ export class UmkmController {
   // ── Mitra ──
   @Get()
   @RequirePermissions(Permission.MITRA_READ)
-  async list(@Query() query: ListUmkmQueryDto) {
-    const data = await this.umkmService.listUmkm(query);
+  async list(
+    @Req() req: AuthenticatedRequest,
+    @Query() query: ListUmkmQueryDto,
+  ) {
+    const data = await this.umkmService.listUmkm(query, scope(req));
     return { success: true, data };
   }
 
@@ -43,29 +51,40 @@ export class UmkmController {
   // Didaftarkan sebelum ':id' agar tidak tertangkap sebagai param.
   @Get('products')
   @RequirePermissions(Permission.MITRA_READ)
-  async listProducts(@Query() query: ListUmkmProductQueryDto) {
-    const data = await this.umkmService.listUmkmProducts(query);
+  async listProducts(
+    @Req() req: AuthenticatedRequest,
+    @Query() query: ListUmkmProductQueryDto,
+  ) {
+    const data = await this.umkmService.listUmkmProducts(query, scope(req));
     return { success: true, data };
   }
 
   @Patch('products/:id/takedown')
   @RequirePermissions(Permission.UMKM_PRODUCT_TAKEDOWN)
-  async takedown(@Param('id') id: string, @Body() dto: TakedownProductDto) {
-    const data = await this.umkmService.takedownProduct(id, dto);
+  async takedown(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: TakedownProductDto,
+  ) {
+    const data = await this.umkmService.takedownProduct(id, dto, scope(req));
     return { success: true, data };
   }
 
   @Get(':id')
   @RequirePermissions(Permission.MITRA_READ)
-  async detail(@Param('id') id: string) {
-    const data = await this.umkmService.getUmkm(id);
+  async detail(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    const data = await this.umkmService.getUmkm(id, scope(req));
     return { success: true, data };
   }
 
   @Patch(':id/verify')
   @RequirePermissions(Permission.MITRA_VERIFY)
-  async verify(@Param('id') id: string, @Body() dto: VerifyUmkmDto) {
-    const data = await this.umkmService.verifyUmkm(id, dto);
+  async verify(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: VerifyUmkmDto,
+  ) {
+    const data = await this.umkmService.verifyUmkm(id, dto, scope(req));
     return { success: true, data };
   }
 
@@ -78,10 +97,11 @@ export class UmkmController {
   @Patch(':id/location')
   @RequirePermissions(Permission.UMKM_LOCATION_UPDATE)
   async updateLocation(
+    @Req() req: AuthenticatedRequest,
     @Param('id') id: string,
     @Body() dto: UpdateUmkmLocationDto,
   ) {
-    const data = await this.umkmService.updateLocation(id, dto);
+    const data = await this.umkmService.updateLocation(id, dto, scope(req));
     return { success: true, data };
   }
 }
