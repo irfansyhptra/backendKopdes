@@ -24,27 +24,27 @@ export class CartService {
 
   async getOrCreateCart(userId: string) {
     let cart = await this.prisma.cart.findUnique({
-        where: { userId },
-        include: {
-          items: {
-            include: {
-              product: {
-                include: {
-                  images: true,
-                  kopdes: { select: { id: true, name: true } },
-                },
+      where: { userId },
+      include: {
+        items: {
+          include: {
+            product: {
+              include: {
+                images: true,
+                kopdes: { select: { id: true, name: true } },
               },
-              umkmProduct: {
-                include: {
-                  images: true,
-                  umkm: {
-                    select: { id: true, businessName: true, status: true },
-                  },
+            },
+            umkmProduct: {
+              include: {
+                images: true,
+                umkm: {
+                  select: { id: true, businessName: true, status: true },
                 },
               },
             },
           },
         },
+      },
     });
 
     if (!cart) {
