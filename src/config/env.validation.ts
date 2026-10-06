@@ -29,8 +29,14 @@ class EnvironmentVariables {
   @IsString()
   DATABASE_URL!: string;
 
+  /**
+   * Hanya dipakai `npm run db:migrate:deploy` (koneksi langsung, bukan pooler).
+   * Prisma Client tidak memerlukannya, jadi tidak boleh wajib: runtime yang
+   * belum menyetelnya akan gagal boot pada SELURUH rute, termasuk /health.
+   */
   @IsString()
-  DIRECT_URL!: string;
+  @IsOptional()
+  DIRECT_URL?: string;
 
   @IsString()
   REDIS_URL!: string;
