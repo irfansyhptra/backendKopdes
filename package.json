@@ -26,7 +26,8 @@
     "seed:discovery": "ts-node prisma/seed-discovery.ts",
     "seed:content": "ts-node prisma/seed-content.ts",
     "seed:pegawai": "ts-node prisma/seed-pegawai.ts",
-    "seed:bandaaceh": "ts-node prisma/seed-banda-aceh.ts"
+    "seed:bandaaceh": "ts-node prisma/seed-banda-aceh.ts",
+    "seed:produk": "ts-node prisma/seed-produk.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
